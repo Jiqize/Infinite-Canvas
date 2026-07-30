@@ -28,7 +28,7 @@ import functools
 import html
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Any, Optional, Tuple
-from threading import Lock, Thread
+from threading import Lock, RLock, Thread
 import httpx
 from PIL import Image, ImageOps
 from io import BytesIO
@@ -301,7 +301,7 @@ QUEUE_LOCK = Lock()
 HISTORY_LOCK = Lock()
 GLOBAL_CONFIG_LOCK = Lock()
 CONVERSATION_LOCK = Lock()
-CANVAS_LOCK = Lock()
+CANVAS_LOCK = RLock()
 LOAD_LOCK = Lock()
 RUNNINGHUB_WORKFLOW_LOCK = Lock()
 NEXT_TASK_ID = 1
@@ -3422,8 +3422,8 @@ def canvas_path(canvas_id):
     return os.path.join(CANVAS_DIR, f"{cleaned}.json")
 
 def save_canvas(canvas):
-    canvas["updated_at"] = now_ms()
     with CANVAS_LOCK:
+        canvas["updated_at"] = max(now_ms(), int(canvas.get("updated_at") or 0) + 1)
         with open(canvas_path(canvas["id"]), 'w', encoding='utf-8') as f:
             json.dump(canvas, f, ensure_ascii=False, indent=2)
 
@@ -6743,7 +6743,7 @@ async def update_asset_classification_prompt(payload: Dict[str, str]):
 def media_preview_cache_paths(path: str, width: int):
     stat = os.stat(path)
     key = hashlib.sha1(
-        f"{os.path.abspath(path)}|{stat.st_mtime_ns}|{stat.st_size}|{width}".encode("utf-8", "ignore")
+        f"{os.path.realpath(path)}|{stat.st_mtime_ns}|{stat.st_size}|{width}".encode("utf-8", "ignore")
     ).hexdigest()
     return (
         os.path.join(MEDIA_PREVIEW_DIR, f"{key}.webp"),
@@ -12782,6 +12782,13 @@ async def ai_config():
         "chat_models": CHAT_MODELS,
         "image_models": IMAGE_MODELS,
         "video_models": VIDEO_MODELS,
+        "flatlay_vision_model": FLATLAY_VISION_MODEL,
+        "flatlay_generate_model": FLATLAY_GENERATE_MODEL,
+        "flatlay_rmbg_provider": RMBG_PROVIDER,
+        "flatlay_rmbg_variant": RMBG_DEFAULT_VARIANT,
+        "flatlay_rmbg_base_url": RMBG_BASE_URL,
+        "flatlay_local_rmbg_base_url": RMBG_LOCAL_BASE_URL,
+        "has_rmbg_key": bool(RMBG_API_KEY),
         "comfy_instances": COMFYUI_INSTANCES,
         "api_providers": providers,
         "has_api_key": bool(AI_API_KEY),
@@ -18253,6 +18260,1501 @@ def run_workflow(name: str, payload: WorkflowRunRequest):
         client_id=payload.client_id or str(uuid.uuid4()),
     )
     return generate(req)
+
+# --- origin/main canvas log cleanup regression restore ---
+
+class DeleteCanvasLogRequest(BaseModel):
+    log_id: str
+    delete_unreferenced_media: bool = False
+    reset_referencing_nodes: bool = False
+    base_updated_at: int = 0
+
+
+def collect_local_media_urls(value: Any) -> List[str]:
+    """Collect local /assets and /output URLs from nested canvas log payloads."""
+    urls = []
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith(("/assets/", "/output/", "/api/storage-files/")):
+            urls.append(text)
+    elif isinstance(value, dict):
+        for item in value.values():
+            urls.extend(collect_local_media_urls(item))
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            urls.extend(collect_local_media_urls(item))
+    return urls
+
+def local_media_path_from_url(url: str) -> Optional[str]:
+    """Resolve a local media URL using the same one-to-one mapping as app mounts."""
+    if not url:
+        return None
+    clean = urllib.parse.unquote(str(url).split("?", 1)[0]).replace("\\", "/")
+    if clean.startswith("/api/storage-files/"):
+        rest = clean[len("/api/storage-files/"):].lstrip("/")
+        kind, _, rel = rest.partition("/")
+        return storage_file_path(kind, rel) if kind and rel else None
+    if clean.startswith("/assets/"):
+        root = ASSETS_DIR
+        rel = clean[len("/assets/"):]
+    elif clean.startswith("/output/"):
+        root = OUTPUT_DIR
+        rel = clean[len("/output/"):]
+    else:
+        return None
+    rel = rel.lstrip("/")
+    if not rel:
+        return None
+    root = os.path.abspath(root)
+    path = os.path.abspath(os.path.join(root, rel))
+    try:
+        return path if os.path.commonpath([root, path]) == root and os.path.exists(path) else None
+    except ValueError:
+        return None
+
+def generated_media_path_from_url(url: str) -> Optional[str]:
+    """Resolve a URL only when it points inside a generated-output directory."""
+    try:
+        path = local_media_path_from_url(url)
+    except (HTTPException, OSError, ValueError):
+        return None
+    if not path or not os.path.isfile(path):
+        return None
+    path = os.path.realpath(path)
+    for root in (OUTPUT_OUTPUT_DIR, OUTPUT_DIR):
+        root = os.path.realpath(root)
+        try:
+            if os.path.commonpath([root, path]) == root:
+                return path
+        except ValueError:
+            continue
+    return None
+
+def json_references_media_path(value: Any, target_path: str) -> bool:
+    """Return True when a JSON-compatible value references the local media file."""
+    target = os.path.normcase(os.path.realpath(target_path))
+    if isinstance(value, str):
+        try:
+            resolved = local_media_path_from_url(value.strip())
+        except (HTTPException, OSError, ValueError):
+            return False
+        return bool(resolved and os.path.normcase(os.path.realpath(resolved)) == target)
+    if isinstance(value, dict):
+        return any(json_references_media_path(item, target) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(json_references_media_path(item, target) for item in value)
+    return False
+
+def persisted_json_references_media_path(target_path: str) -> bool:
+    """Scan persisted user documents before deleting generated media.
+
+    Canvas logs are only one possible owner. Nodes, other canvases, ordinary
+    generation history, conversations, and asset metadata all count as live
+    references and keep the file on disk.
+    """
+    # Generation history is an index of outputs, not an owner. When an output
+    # is deleted we prune its history card separately so this index cannot pin
+    # every generated file forever.
+    candidates = [ASSET_LIBRARY_PATH]
+    for root in (CANVAS_DIR, CONVERSATION_DIR):
+        if os.path.isdir(root):
+            for current, _, files in os.walk(root):
+                candidates.extend(os.path.join(current, name) for name in files if name.lower().endswith(".json"))
+    seen = set()
+    for path in candidates:
+        path = os.path.abspath(path)
+        if path in seen or not os.path.isfile(path):
+            continue
+        seen.add(path)
+        try:
+            with open(path, "r", encoding="utf-8-sig") as handle:
+                value = json.load(handle)
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            # A file may be in the middle of an unrelated write. Safety wins:
+            # keep the media instead of treating an unreadable owner as absent.
+            return True
+        if json_references_media_path(value, target_path):
+            return True
+    return False
+
+def prune_generation_history_for_media(paths: List[str]) -> int:
+    """Remove history cards that would otherwise point at deleted media."""
+    if not paths or not os.path.isfile(HISTORY_FILE):
+        return 0
+    try:
+        with HISTORY_LOCK:
+            with open(HISTORY_FILE, "r", encoding="utf-8-sig") as handle:
+                history = json.load(handle)
+            if not isinstance(history, list):
+                return 0
+            kept = [
+                record for record in history
+                if not any(json_references_media_path(record, path) for path in paths)
+            ]
+            removed = len(history) - len(kept)
+            if removed:
+                with open(HISTORY_FILE, "w", encoding="utf-8") as handle:
+                    json.dump(kept, handle, ensure_ascii=False, indent=4)
+            return removed
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return 0
+
+def smart_owned_result_items(images: List[Any], paths: List[str]) -> List[Any]:
+    """Return generated results, including legacy results without the marker."""
+    return [
+        item for item in images
+        if isinstance(item, dict)
+        and item.get("loopInputPreview") is not True
+        and (
+            item.get("generatedResult") is True
+            or any(json_references_media_path(item, path) for path in paths)
+        )
+    ]
+
+def expand_canvas_generated_media_paths(canvas: Dict[str, Any], paths: List[str]) -> List[str]:
+    """Include every generated result owned by a result node touched by the log."""
+    expanded = list(paths)
+    for node in list(canvas.get("nodes") or []):
+        node_type = str(node.get("type") or "").strip().lower()
+        images = list(node.get("images") or [])
+        if node_type == "output":
+            owned_items = images
+        elif node_type == "smart-image":
+            owned_items = smart_owned_result_items(images, paths)
+        else:
+            owned_items = []
+        if not any(json_references_media_path(item, path) for item in owned_items for path in paths):
+            continue
+        for item in owned_items:
+            for url in collect_local_media_urls(item):
+                candidate = generated_media_path_from_url(url)
+                if candidate and candidate not in expanded:
+                    expanded.append(candidate)
+    return expanded
+
+def reset_canvas_result_nodes_for_media(canvas: Dict[str, Any], paths: List[str]) -> List[str]:
+    """Clear generated media while preserving prompts, references, settings and links."""
+    reset_ids = []
+    updated_nodes = []
+    for node in list(canvas.get("nodes") or []):
+        node = dict(node)
+        node_type = str(node.get("type") or "").strip().lower()
+        changed = False
+        if isinstance(node.get("generatedOutputs"), list):
+            outputs = list(node.get("generatedOutputs") or [])
+            kept_outputs = [
+                item for item in outputs
+                if not any(json_references_media_path(item, path) for path in paths)
+            ]
+            if len(kept_outputs) != len(outputs):
+                node["generatedOutputs"] = kept_outputs
+                changed = True
+        if node_type in {"smart-image", "output"} and isinstance(node.get("images"), list):
+            images = list(node.get("images") or [])
+            if node_type == "smart-image":
+                owned_items = smart_owned_result_items(images, paths)
+            else:
+                owned_items = images
+            owns_target = any(
+                json_references_media_path(item, path) for item in owned_items for path in paths
+            )
+            kept_images = [
+                item for item in images
+                if not (
+                    owns_target
+                    and item in owned_items
+                    and any(json_references_media_path(item, path) for path in paths)
+                )
+            ]
+            if len(kept_images) != len(images):
+                node["images"] = kept_images
+                changed = True
+                if node_type == "output":
+                    node["_pending"] = []
+                    node["imageComparisons"] = {}
+                if node_type == "smart-image":
+                    node["pending"] = 0
+                    node["running"] = False
+                    node["queued"] = False
+                    for key in (
+                        "jimengPending", "pendingTasks", "runStartedAt", "runFinishedAt",
+                        "runElapsedMs", "runTimerHidden", "outputKind", "w", "h",
+                    ):
+                        node.pop(key, None)
+        elif node_type == "image" and any(json_references_media_path(node.get("url"), path) for path in paths):
+            node["url"] = ""
+            node["mediaKind"] = "image"
+            node["name"] = "空白图片"
+            changed = True
+        if changed and node.get("id"):
+            reset_ids.append(str(node["id"]))
+        updated_nodes.append(node)
+
+    if reset_ids:
+        canvas["nodes"] = updated_nodes
+    return reset_ids
+
+def delete_media_preview_cache(path: str) -> int:
+    """Delete derived previews for a source file before the source disappears."""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return 0
+    source = os.path.realpath(path)
+    removed = 0
+    for width in range(0, 4097):
+        keys = [hashlib.sha1(f"{source}|{stat.st_mtime_ns}|{stat.st_size}|{width}|jpg".encode("utf-8", "ignore")).hexdigest() + ".jpg"]
+        if 64 <= width <= 2048:
+            preview_key = hashlib.sha1(f"{source}|{stat.st_mtime_ns}|{stat.st_size}|{width}".encode("utf-8", "ignore")).hexdigest()
+            keys.extend((preview_key + ".webp", preview_key + ".png"))
+        for name in keys:
+            cache_path = os.path.join(MEDIA_PREVIEW_DIR, name)
+            try:
+                if os.path.isfile(cache_path):
+                    os.remove(cache_path)
+                    removed += 1
+            except OSError:
+                pass
+    return removed
+
+
+@app.post("/api/canvases/{canvas_id}/logs/delete")
+async def delete_canvas_log(canvas_id: str, payload: DeleteCanvasLogRequest):
+    log_id = str(payload.log_id or "").strip()
+    if not log_id:
+        raise HTTPException(status_code=400, detail="缺少日志 ID")
+
+    def remove_log_record():
+        with CANVAS_LOCK:
+            canvas = load_canvas(canvas_id)
+            current_updated_at = int(canvas.get("updated_at") or 0)
+            if payload.base_updated_at and current_updated_at and int(payload.base_updated_at) < current_updated_at:
+                raise HTTPException(status_code=409, detail={
+                    "message": "画布已被其他页面更新，请刷新后重试。",
+                    "canvas": canvas,
+                    "updated_at": current_updated_at,
+                })
+            logs = list(canvas.get("logs") or [])
+            target = next((item for item in logs if str(item.get("id") or "") == log_id), None)
+            if not target:
+                raise HTTPException(status_code=404, detail="生成日志不存在")
+
+            candidate_paths = []
+            if payload.delete_unreferenced_media:
+                for url in collect_local_media_urls(target.get("outputs") or []):
+                    path = generated_media_path_from_url(url)
+                    if path and path not in candidate_paths:
+                        candidate_paths.append(path)
+
+            reset_node_ids = []
+            if payload.reset_referencing_nodes and candidate_paths:
+                candidate_paths = expand_canvas_generated_media_paths(canvas, candidate_paths)
+                reset_node_ids = reset_canvas_result_nodes_for_media(canvas, candidate_paths)
+
+            canvas["logs"] = [item for item in logs if str(item.get("id") or "") != log_id]
+            save_canvas(canvas)
+            return canvas, candidate_paths, reset_node_ids
+
+    canvas, candidate_paths, reset_node_ids = await asyncio.to_thread(remove_log_record)
+
+    def cleanup_unreferenced_media():
+        removed_files = []
+        skipped_referenced = []
+        removed_previews = 0
+        deletable_paths = []
+        for path in candidate_paths:
+            if persisted_json_references_media_path(path):
+                skipped_referenced.append(os.path.basename(path))
+                continue
+            deletable_paths.append(path)
+        prune_generation_history_for_media(deletable_paths)
+        for path in deletable_paths:
+            try:
+                removed_previews += delete_media_preview_cache(path)
+                os.remove(path)
+                removed_files.append(os.path.basename(path))
+            except OSError:
+                skipped_referenced.append(os.path.basename(path))
+        return removed_files, skipped_referenced, removed_previews
+
+    removed_files = []
+    skipped_referenced = []
+    removed_previews = 0
+    if payload.delete_unreferenced_media:
+        def locked_cleanup():
+            with CANVAS_LOCK:
+                return cleanup_unreferenced_media()
+        removed_files, skipped_referenced, removed_previews = await asyncio.to_thread(locked_cleanup)
+
+    await manager.broadcast_canvas_updated(canvas_id, int(canvas.get("updated_at") or now_ms()))
+    return {
+        "ok": True,
+        "canvas": canvas,
+        "removed_files": removed_files,
+        "removed_previews": removed_previews,
+        "reset_node_ids": reset_node_ids,
+        "skipped_referenced": skipped_referenced,
+    }
+
+# --- End origin/main canvas log cleanup regression restore ---
+
+
+# --- QCOS Flatlay 模特图转平面图 ---
+
+import sqlite3
+
+
+FLATLAY_VISION_MODEL = os.getenv(
+    "FLATLAY_VISION_MODEL",
+    os.getenv("COMFLY_VISION_MODEL", "gpt-5.5"),
+)
+FLATLAY_GENERATE_MODEL = os.getenv(
+    "FLATLAY_GENERATE_MODEL",
+    os.getenv("COMFLY_GENERATE_MODEL", IMAGE_MODEL),
+)
+RMBG_PROVIDER = os.getenv("RMBG_PROVIDER", "none").strip().lower()
+RMBG_BASE_URL = os.getenv("RMBG_BASE_URL", "").rstrip("/")
+RMBG_API_KEY = os.getenv("RMBG_API_KEY", "")
+RMBG_LOCAL_BASE_URL = os.getenv(
+    "RMBG_LOCAL_BASE_URL",
+    "http://127.0.0.1:8000",
+).rstrip("/")
+RMBG_DEFAULT_VARIANT = os.getenv(
+    "RMBG_DEFAULT_VARIANT",
+    "lite",
+).strip().lower()
+FLATLAY_LOCK = Lock()
+FLATLAY_DB = os.path.join(DATA_DIR, "flatlay.db")
+FLATLAY_WORKERS: Dict[str, asyncio.Task] = {}
+
+
+class FlatlayImage(BaseModel):
+    url: str
+    name: str = ""
+    id: str = ""
+
+
+class FlatlayCreateRequest(BaseModel):
+    title: str = "Flatlay batch"
+    target_category: str = "auto"
+    vision_model: str = ""
+    generate_model: str = ""
+    size: str = "1536x1024"
+    quality: str = "auto"
+    rmbg_provider: str = "none"
+    rmbg_variant: str = "lite"
+    rmbg_base_url: str = ""
+    rmbg_api_key: str = ""
+    images: List[FlatlayImage] = []
+    autostart: bool = True
+
+
+class FlatlayControlRequest(BaseModel):
+    mode: str = "generation"
+    phrase: str = ""
+    rmbg_provider: str = ""
+    rmbg_variant: str = ""
+    rmbg_base_url: str = ""
+    rmbg_api_key: str = ""
+
+
+class FlatlayPhraseRequest(BaseModel):
+    phrase: str = Field(min_length=1, max_length=120)
+
+
+def qcos_flatlay_provider():
+    return get_api_provider("comfly")
+
+
+def qcos_flatlay_base_url(provided=""):
+    provider = qcos_flatlay_provider()
+    candidate = (
+        provided
+        if provider.get("id") == "comfly" and provided
+        else provider.get("base_url") or AI_BASE_URL
+    )
+    candidate = str(candidate or "").strip().rstrip("/")
+    parsed = urllib.parse.urlparse(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=400, detail=f"API Base URL 不合法：{candidate}")
+    return candidate
+
+
+def qcos_flatlay_chat_url(provided=""):
+    base = qcos_flatlay_base_url(provided)
+    return f"{base}/chat/completions" if base.endswith("/v1") else f"{base}/v1/chat/completions"
+
+
+def qcos_flatlay_api_headers(json_body=True, api_key="", provider=None):
+    provider = provider or qcos_flatlay_provider()
+    clean_key = (api_key or "").strip() if provider.get("id") == "comfly" else ""
+    if not clean_key:
+        return api_headers(json_body=json_body, provider=provider)
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {clean_key}",
+    }
+    if json_body:
+        headers["Content-Type"] = "application/json"
+    return headers
+
+
+def qcos_flatlay_error_detail(exc):
+    if isinstance(exc, HTTPException):
+        return exc.detail
+    if isinstance(exc, httpx.TimeoutException):
+        return f"上游生图接口超时（{AI_REQUEST_TIMEOUT:g} 秒），可能仍在排队或生成过慢"
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"上游接口错误 {exc.response.status_code}: {exc.response.text[:500]}"
+    if isinstance(exc, httpx.RequestError):
+        text = str(exc).strip()
+        return f"请求上游生图接口失败：{text or exc.__class__.__name__}"
+    return str(exc).strip() or exc.__class__.__name__
+
+
+async def qcos_flatlay_wait_for_image_task(
+    client,
+    task_id,
+    provider,
+    api_key="",
+):
+    timeout = (
+        APIMART_IMAGE_TASK_TIMEOUT
+        if is_apimart_provider(provider)
+        else IMAGE_TASK_TIMEOUT
+    )
+    interval = (
+        APIMART_IMAGE_POLL_INTERVAL
+        if is_apimart_provider(provider)
+        else IMAGE_POLL_INTERVAL
+    )
+    deadline = time.monotonic() + timeout
+    last_payload = {}
+    while time.monotonic() < deadline:
+        response = await client.get(
+            image_task_url_for_provider(provider, task_id),
+            headers=qcos_flatlay_api_headers(
+                api_key=api_key,
+                provider=provider,
+            ),
+        )
+        response.raise_for_status()
+        last_payload = response.json()
+        status = image_task_status(last_payload)
+        if not status:
+            try:
+                extract_image(last_payload)
+                return last_payload
+            except HTTPException:
+                pass
+        if status in IMAGE_TASK_SUCCESS_STATUSES:
+            return last_payload
+        if status in IMAGE_TASK_FAILED_STATUSES:
+            raise HTTPException(
+                status_code=502,
+                detail=f"生图任务失败：{image_task_fail_reason(last_payload)}",
+            )
+        await asyncio.sleep(
+            min(interval, max(0.0, deadline - time.monotonic()))
+        )
+    raise HTTPException(
+        status_code=504,
+        detail=f"生图任务超时（已等待 {int(timeout)} 秒），task_id={task_id}",
+    )
+
+
+async def qcos_flatlay_generate_ai_image(
+    prompt,
+    size,
+    quality,
+    model,
+    reference_images=None,
+    api_key="",
+    base_url="",
+):
+    provider = qcos_flatlay_provider()
+    if provider.get("id") != "comfly" or (not api_key and not base_url):
+        return await generate_ai_image(
+            prompt,
+            size,
+            quality,
+            model,
+            reference_images,
+            provider_id=provider.get("id") or "comfly",
+        )
+
+    provider = {**provider, "base_url": qcos_flatlay_base_url(base_url)}
+    if is_gpt_image_2_model(model) and not is_apimart_provider(provider):
+        size = normalize_gpt_image_2_size(size)
+    generation_url = provider_endpoint_url(
+        provider,
+        "image_generation_endpoint",
+        "/v1/images/generations",
+    )
+    edit_url = provider_endpoint_url(
+        provider,
+        "image_edit_endpoint",
+        "/v1/images/edits",
+    )
+    refs = [ref for ref in (reference_images or []) if ref.get("url")]
+    mask_refs = [
+        ref
+        for ref in refs
+        if str(ref.get("role") or "").strip().lower() == "mask"
+        or str(ref.get("name") or "").lower().endswith("_mask.png")
+    ]
+    image_refs = [ref for ref in refs if ref not in mask_refs]
+    request_fields = {
+        "model": model,
+        "prompt": prompt,
+        "response_format": "url",
+        "n": "1",
+    }
+    if size:
+        request_fields["size"] = size
+    if quality:
+        request_fields["quality"] = quality
+
+    async with httpx.AsyncClient(timeout=AI_REQUEST_TIMEOUT) as client:
+        response = None
+        request_mode = effective_image_request_mode(provider, model)
+        if request_mode == "openai-json":
+            body = {
+                "model": model,
+                "prompt": prompt,
+                "size": size,
+                "extra_body": {"response_format": "url"},
+            }
+            if image_refs:
+                body["extra_body"]["image"] = [
+                    reference_to_data_url(ref, max_size=1536)
+                    for ref in image_refs[:16]
+                ]
+            response = await client.post(
+                generation_url,
+                headers=qcos_flatlay_api_headers(
+                    api_key=api_key,
+                    provider=provider,
+                ),
+                json=body,
+            )
+        elif is_gpt_image_2_model(model) and not mask_refs:
+            body = {"model": model, "prompt": prompt, "size": size}
+            if quality:
+                body["quality"] = quality
+            if image_refs:
+                body["image"] = [
+                    reference_to_data_url(ref, max_size=1536)
+                    for ref in image_refs[:4]
+                ]
+            response = await client.post(
+                generation_url,
+                headers=qcos_flatlay_api_headers(
+                    api_key=api_key,
+                    provider=provider,
+                ),
+                json=body,
+            )
+        elif image_refs:
+            files = []
+            opened = []
+            try:
+                for ref in image_refs[:4]:
+                    path = output_file_from_url(ref.get("url", ""))
+                    if not path:
+                        continue
+                    file_handle = open(path, "rb")
+                    opened.append(file_handle)
+                    files.append(
+                        (
+                            "image",
+                            (
+                                os.path.basename(path),
+                                file_handle,
+                                content_type_for_path(path),
+                            ),
+                        )
+                    )
+                if mask_refs:
+                    mask_path = output_file_from_url(mask_refs[0].get("url", ""))
+                    if mask_path:
+                        file_handle = open(mask_path, "rb")
+                        opened.append(file_handle)
+                        files.append(
+                            (
+                                "mask",
+                                (
+                                    os.path.basename(mask_path),
+                                    file_handle,
+                                    content_type_for_path(mask_path),
+                                ),
+                            )
+                        )
+                response = await client.post(
+                    edit_url,
+                    headers=qcos_flatlay_api_headers(
+                        json_body=False,
+                        api_key=api_key,
+                        provider=provider,
+                    ),
+                    data=request_fields,
+                    files=files,
+                )
+                if response.status_code >= 400:
+                    response = None
+            finally:
+                for file_handle in opened:
+                    file_handle.close()
+            if response is None:
+                body = {
+                    **request_fields,
+                    "n": 1,
+                    "image": [
+                        reference_to_data_url(ref, max_size=1536)
+                        for ref in image_refs[:4]
+                    ],
+                }
+                response = await client.post(
+                    generation_url,
+                    headers=qcos_flatlay_api_headers(
+                        api_key=api_key,
+                        provider=provider,
+                    ),
+                    json=body,
+                )
+        else:
+            response = await client.post(
+                generation_url,
+                headers=qcos_flatlay_api_headers(
+                    api_key=api_key,
+                    provider=provider,
+                ),
+                json={**request_fields, "n": 1},
+            )
+        response.raise_for_status()
+        raw = response.json()
+        try:
+            return extract_image(raw), raw
+        except HTTPException:
+            task_id = extract_task_id(raw)
+            if not task_id:
+                raise
+        task_result = await qcos_flatlay_wait_for_image_task(
+            client,
+            task_id,
+            provider,
+            api_key=api_key,
+        )
+        return extract_image(task_result), task_result
+
+
+FLATLAY_TARGET_RULES = {
+    "auto": {
+        "vision": "如果画面里同时出现上装和下装，只能选视觉上最主要、最居中、最突出的一件，绝不允许输出组合。",
+        "generate": "如果原图里还有其他搭配，也只能围绕该短语代表的一件主单品生成。禁止把另一件衣服、整套穿搭或多件组合一起生成。",
+    },
+    "upper": {
+        "vision": "只允许从上装里选一件主单品，例如上衣、衬衫、针织衫、背心、卫衣、外套。即使画面里同时有裤子或裙子，也不要输出下装。",
+        "generate": "该批次已指定为上装。只保留一件上装主单品，禁止生成裤子、半裙、短裙、长裙、连衣裙或任何下装。",
+    },
+    "lower": {
+        "vision": "只允许从下装里选一件主单品，例如长裤、短裤、半裙、长裙。即使画面里同时有上衣，也不要输出上装。",
+        "generate": "该批次已指定为下装。只保留一件下装主单品，禁止生成衬衫、针织衫、外套、背心、上衣或任何上装。",
+    },
+    "onepiece": {
+        "vision": "只允许从连身装里选一件主单品，例如连衣裙、连体裤、背带裙。不要输出分体的上装或下装。",
+        "generate": "该批次已指定为连身装。只保留一件连身主单品，例如连衣裙或连体裤。禁止生成上装加下装的分体搭配。",
+    },
+}
+
+FLATLAY_PROMPT_PRIMARY = (
+    "根据用户模特展示图里的{phrase}，生成用于创建高质量平铺单品图。"
+    "生成一张新的商品图，这张图要在纯白背景上，并排展示该单品的正面和背面平铺效果。"
+    "构图规范：正面视图必须在左侧，背面视图必须在右侧，两者并排居中。"
+    "背景统一：永远是纯白色、无缝、无阴影的背景。"
+    "元素排除：必须移除原图中的模特、搭配的其他衣物、鞋子和配饰，只保留目标单品。"
+    "要求尽量还原原图单品的版型、材质、纹理、颜色和关键细节，但不要生成多余搭配。"
+)
+FLATLAY_PROMPT_FALLBACKS = [
+    "请把模特图里的{phrase}单独提取出来，重新生成一张白底平铺单品图。正面在左，背面在右，并排居中，背景纯白无阴影。只保留目标单品，不要模特，不要搭配，不要配饰。",
+    "围绕模特图中的{phrase}创建商品级平铺图，输出一张左右双视图图像。左侧为正面，右侧为背面，纯白背景，去除模特与其他服饰，只保留该单品。",
+]
+
+def flatlay_connect():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    conn = sqlite3.connect(FLATLAY_DB)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def flatlay_json(value):
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+def normalize_flatlay_category(value):
+    category = (value or "auto").strip().lower()
+    if category not in FLATLAY_TARGET_RULES:
+        raise HTTPException(status_code=400, detail=f"不支持的平面图品类：{category}")
+    return category
+
+def normalize_flatlay_rmbg_provider(value):
+    provider = (value or RMBG_PROVIDER or "none").strip().lower()
+    aliases = {"off": "none", "disabled": "none", "local": "local_birefnet", "removebg": "remove_bg"}
+    provider = aliases.get(provider, provider)
+    if provider not in {"none", "local_birefnet", "remove_bg"}:
+        raise HTTPException(status_code=400, detail=f"不支持的去底 provider：{provider}")
+    return provider
+
+def normalize_flatlay_rmbg_variant(value):
+    variant = (value or RMBG_DEFAULT_VARIANT or "lite").strip().lower()
+    if variant not in {"lite", "base"}:
+        raise HTTPException(status_code=400, detail=f"不支持的去底模型：{variant}")
+    return variant
+
+def init_flatlay_db():
+    with FLATLAY_LOCK:
+        conn = flatlay_connect()
+        try:
+            conn.executescript(
+                """
+                PRAGMA journal_mode=WAL;
+                CREATE TABLE IF NOT EXISTS flatlay_batches (
+                    id TEXT PRIMARY KEY,
+                    title TEXT,
+                    target_category TEXT,
+                    vision_model TEXT,
+                    generate_model TEXT,
+                    size TEXT,
+                    quality TEXT,
+                    rmbg_provider TEXT,
+                    rmbg_variant TEXT,
+                    status TEXT,
+                    created_at REAL,
+                    updated_at REAL
+                );
+                CREATE TABLE IF NOT EXISTS flatlay_items (
+                    id TEXT PRIMARY KEY,
+                    batch_id TEXT NOT NULL,
+                    item_index INTEGER NOT NULL,
+                    source_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    phrase TEXT,
+                    prompt TEXT,
+                    rerun_mode TEXT DEFAULT 'full',
+                    combined_url TEXT,
+                    rmbg_url TEXT,
+                    front_url TEXT,
+                    back_url TEXT,
+                    error_message TEXT,
+                    attempts INTEGER DEFAULT 0,
+                    created_at REAL,
+                    updated_at REAL,
+                    started_at REAL,
+                    completed_at REAL
+                );
+                CREATE TABLE IF NOT EXISTS flatlay_steps (
+                    id TEXT PRIMARY KEY,
+                    item_id TEXT NOT NULL,
+                    step_name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    detail_json TEXT,
+                    error_message TEXT,
+                    started_at REAL,
+                    completed_at REAL
+                );
+                CREATE INDEX IF NOT EXISTS idx_flatlay_items_batch ON flatlay_items(batch_id, item_index);
+                CREATE INDEX IF NOT EXISTS idx_flatlay_items_status ON flatlay_items(status);
+                CREATE INDEX IF NOT EXISTS idx_flatlay_steps_item ON flatlay_steps(item_id, started_at);
+                """
+            )
+            item_columns = {row["name"] for row in conn.execute("PRAGMA table_info(flatlay_items)").fetchall()}
+            if "rerun_mode" not in item_columns:
+                conn.execute("ALTER TABLE flatlay_items ADD COLUMN rerun_mode TEXT DEFAULT 'full'")
+            conn.commit()
+        finally:
+            conn.close()
+
+def recover_flatlay_state():
+    with FLATLAY_LOCK:
+        conn = flatlay_connect()
+        try:
+            now = time.time()
+            conn.execute(
+                """
+                UPDATE flatlay_items
+                SET status='pending', updated_at=?, error_message='Recovered after server restart.'
+                WHERE status IN ('analyzing', 'generating', 'rmbg', 'splitting', 'running')
+                """,
+                (now,),
+            )
+            conn.execute(
+                """
+                UPDATE flatlay_batches
+                SET status='paused', updated_at=?
+                WHERE status='running'
+                """,
+                (now,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+def normalize_flatlay_image(image: FlatlayImage):
+    item = image.model_dump()
+    url = (item.get("url") or "").strip()
+    if not output_file_from_url(url):
+        raise HTTPException(status_code=400, detail=f"图片必须先上传到本地输出目录：{url}")
+    return {
+        "id": (item.get("id") or uuid.uuid4().hex)[:80],
+        "url": url,
+        "name": (item.get("name") or os.path.basename(url))[:180],
+    }
+
+def flatlay_counts_for_conn(conn, batch_id):
+    rows = conn.execute(
+        "SELECT status, COUNT(*) AS count FROM flatlay_items WHERE batch_id=? GROUP BY status",
+        (batch_id,),
+    ).fetchall()
+    counts = {row["status"]: int(row["count"]) for row in rows}
+    total = sum(counts.values())
+    processing = sum(counts.get(key, 0) for key in ["analyzing", "generating", "rmbg", "splitting", "running"])
+    return {
+        "total": total,
+        "pending": counts.get("pending", 0),
+        "processing": processing,
+        "completed": counts.get("completed", 0),
+        "failed": counts.get("failed", 0),
+    }
+
+def flatlay_batch_record(row, counts=None):
+    data = dict(row)
+    data["counts"] = counts or {"total": 0, "pending": 0, "processing": 0, "completed": 0, "failed": 0}
+    return data
+
+def flatlay_item_record(row):
+    data = dict(row)
+    try:
+        data["source_image"] = json.loads(data.pop("source_json") or "{}")
+    except Exception:
+        data["source_image"] = {}
+    return data
+
+def flatlay_step_record(row):
+    data = dict(row)
+    try:
+        data["detail"] = json.loads(data.pop("detail_json") or "{}")
+    except Exception:
+        data["detail"] = {}
+    return data
+
+def list_flatlay_batches(limit=50):
+    limit = max(1, min(int(limit or 50), 100))
+    with FLATLAY_LOCK:
+        conn = flatlay_connect()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM flatlay_batches ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [flatlay_batch_record(row, flatlay_counts_for_conn(conn, row["id"])) for row in rows]
+        finally:
+            conn.close()
+
+def get_flatlay_detail(batch_id):
+    with FLATLAY_LOCK:
+        conn = flatlay_connect()
+        try:
+            batch = conn.execute("SELECT * FROM flatlay_batches WHERE id=?", (batch_id,)).fetchone()
+            if not batch:
+                raise HTTPException(status_code=404, detail="平面图批次不存在")
+            items = conn.execute(
+                "SELECT * FROM flatlay_items WHERE batch_id=? ORDER BY item_index ASC",
+                (batch_id,),
+            ).fetchall()
+            item_ids = [row["id"] for row in items]
+            steps = []
+            if item_ids:
+                placeholders = ",".join("?" for _ in item_ids)
+                steps = conn.execute(
+                    f"SELECT * FROM flatlay_steps WHERE item_id IN ({placeholders}) ORDER BY started_at ASC",
+                    item_ids,
+                ).fetchall()
+            return {
+                "batch": flatlay_batch_record(batch, flatlay_counts_for_conn(conn, batch_id)),
+                "items": [flatlay_item_record(row) for row in items],
+                "steps": [flatlay_step_record(row) for row in steps],
+            }
+        finally:
+            conn.close()
+
+def create_flatlay_batch(payload: FlatlayCreateRequest):
+    images = [normalize_flatlay_image(item) for item in payload.images]
+    if not images:
+        raise HTTPException(status_code=400, detail="请先上传模特图")
+    if len(images) > 500:
+        raise HTTPException(status_code=400, detail="单个平面图批次最多 500 张图片")
+    title = (payload.title or "Flatlay batch").strip()[:120] or "Flatlay batch"
+    category = normalize_flatlay_category(payload.target_category)
+    vision_model = selected_model(payload.vision_model or FLATLAY_VISION_MODEL, FLATLAY_VISION_MODEL)
+    generate_model = selected_model(payload.generate_model or FLATLAY_GENERATE_MODEL, FLATLAY_GENERATE_MODEL)
+    provider = normalize_flatlay_rmbg_provider(payload.rmbg_provider)
+    variant = normalize_flatlay_rmbg_variant(payload.rmbg_variant)
+    batch_id = f"fl_{time.strftime('%Y%m%d')}_{uuid.uuid4().hex[:8]}"
+    now = time.time()
+    with FLATLAY_LOCK:
+        conn = flatlay_connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO flatlay_batches(
+                    id, title, target_category, vision_model, generate_model, size, quality,
+                    rmbg_provider, rmbg_variant, status, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                (batch_id, title, category, vision_model, generate_model, payload.size, payload.quality, provider, variant, now, now),
+            )
+            for index, image in enumerate(images, start=1):
+                conn.execute(
+                    """
+                    INSERT INTO flatlay_items(
+                        id, batch_id, item_index, source_json, status, phrase, prompt, rerun_mode,
+                        combined_url, rmbg_url, front_url, back_url, error_message, attempts,
+                        created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, 'pending', NULL, NULL, 'full', NULL, NULL, NULL, NULL, NULL, 0, ?, ?)
+                    """,
+                    (f"fli_{uuid.uuid4().hex[:12]}", batch_id, index, flatlay_json(image), now, now),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+    return batch_id
+
+def set_flatlay_batch_status(batch_id, status):
+    with FLATLAY_LOCK:
+        conn = flatlay_connect()
+        try:
+            row = conn.execute("SELECT id FROM flatlay_batches WHERE id=?", (batch_id,)).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="平面图批次不存在")
+            conn.execute("UPDATE flatlay_batches SET status=?, updated_at=? WHERE id=?", (status, time.time(), batch_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+def prepare_flatlay_run(batch_id):
+    with FLATLAY_LOCK:
+        conn = flatlay_connect()
+        try:
+            batch = conn.execute("SELECT * FROM flatlay_batches WHERE id=?", (batch_id,)).fetchone()
+            if not batch:
+                raise HTTPException(status_code=404, detail="平面图批次不存在")
+            counts = flatlay_counts_for_conn(conn, batch_id)
+            if counts["pending"] == 0:
+                final_status = "failed" if counts["failed"] and not counts["completed"] else ("partial" if counts["failed"] else "completed")
+                conn.execute("UPDATE flatlay_batches SET status=?, updated_at=? WHERE id=?", (final_status, time.time(), batch_id))
+                conn.commit()
+                return False
+            conn.execute("UPDATE flatlay_batches SET status='running', updated_at=? WHERE id=?", (time.time(), batch_id))
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+
+def claim_next_flatlay_item(batch_id):
+    with FLATLAY_LOCK:
+        conn = flatlay_connect()
+        try:
+            batch = conn.execute("SELECT * FROM flatlay_batches WHERE id=?", (batch_id,)).fetchone()
+            if not batch or batch["status"] != "running":
+                return None, None
+            item = conn.execute(
+                """
+                SELECT * FROM flatlay_items
+                WHERE batch_id=? AND status='pending'
+                ORDER BY item_index ASC
+                LIMIT 1
+                """,
+                (batch_id,),
+            ).fetchone()
+            if not item:
+                return dict(batch), None
+            now = time.time()
+            conn.execute(
+                """
+                UPDATE flatlay_items
+                SET status='running', attempts=attempts+1, started_at=?, updated_at=?, error_message=NULL
+                WHERE id=?
+                """,
+                (now, now, item["id"]),
+            )
+            conn.execute("UPDATE flatlay_batches SET updated_at=? WHERE id=?", (now, batch_id))
+            conn.commit()
+            item = conn.execute("SELECT * FROM flatlay_items WHERE id=?", (item["id"],)).fetchone()
+            return dict(batch), flatlay_item_record(item)
+        finally:
+            conn.close()
+
+def flatlay_update_item(item_id, **fields):
+    if not fields:
+        return
+    fields["updated_at"] = time.time()
+    names = list(fields.keys())
+    values = [fields[name] for name in names]
+    assignments = ", ".join(f"{name}=?" for name in names)
+    with FLATLAY_LOCK:
+        conn = flatlay_connect()
+        try:
+            conn.execute(f"UPDATE flatlay_items SET {assignments} WHERE id=?", [*values, item_id])
+            row = conn.execute("SELECT batch_id FROM flatlay_items WHERE id=?", (item_id,)).fetchone()
+            if row:
+                conn.execute("UPDATE flatlay_batches SET updated_at=? WHERE id=?", (time.time(), row["batch_id"]))
+            conn.commit()
+        finally:
+            conn.close()
+
+def begin_flatlay_step(item_id, step_name, detail=None):
+    step_id = f"fls_{uuid.uuid4().hex[:12]}"
+    with FLATLAY_LOCK:
+        conn = flatlay_connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO flatlay_steps(id, item_id, step_name, status, detail_json, error_message, started_at, completed_at)
+                VALUES (?, ?, ?, 'running', ?, NULL, ?, NULL)
+                """,
+                (step_id, item_id, step_name, flatlay_json(detail or {}), time.time()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    return step_id
+
+def finish_flatlay_step(step_id, detail=None, error_message=None):
+    with FLATLAY_LOCK:
+        conn = flatlay_connect()
+        try:
+            conn.execute(
+                """
+                UPDATE flatlay_steps
+                SET status=?, detail_json=?, error_message=?, completed_at=?
+                WHERE id=?
+                """,
+                ("failed" if error_message else "completed", flatlay_json(detail or {}), error_message, time.time(), step_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+def finalize_flatlay_if_idle(batch_id):
+    with FLATLAY_LOCK:
+        conn = flatlay_connect()
+        try:
+            batch = conn.execute("SELECT status FROM flatlay_batches WHERE id=?", (batch_id,)).fetchone()
+            if not batch:
+                return
+            counts = flatlay_counts_for_conn(conn, batch_id)
+            if batch["status"] == "running" and counts["pending"] == 0 and counts["processing"] == 0:
+                status = "failed" if counts["failed"] and not counts["completed"] else ("partial" if counts["failed"] else "completed")
+                conn.execute("UPDATE flatlay_batches SET status=?, updated_at=? WHERE id=?", (status, time.time(), batch_id))
+                conn.commit()
+        finally:
+            conn.close()
+
+def reset_flatlay_failed_items(batch_id):
+    with FLATLAY_LOCK:
+        conn = flatlay_connect()
+        try:
+            row = conn.execute("SELECT id FROM flatlay_batches WHERE id=?", (batch_id,)).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="平面图批次不存在")
+            conn.execute(
+                """
+                UPDATE flatlay_items
+                SET status='pending', error_message=NULL, completed_at=NULL, updated_at=?
+                WHERE batch_id=? AND status='failed'
+                """,
+                (time.time(), batch_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+def reset_flatlay_item(item_id, mode="generation"):
+    rerun_mode = "full" if mode == "full" else "generation"
+    with FLATLAY_LOCK:
+        conn = flatlay_connect()
+        try:
+            row = conn.execute("SELECT batch_id FROM flatlay_items WHERE id=?", (item_id,)).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="平面图任务不存在")
+            phrase_sql = ", phrase=NULL" if rerun_mode == "full" else ""
+            conn.execute(
+                f"""
+                UPDATE flatlay_items
+                SET status='pending', rerun_mode=?, prompt=NULL, combined_url=NULL, rmbg_url=NULL,
+                    front_url=NULL, back_url=NULL, error_message=NULL, completed_at=NULL, updated_at=?{phrase_sql}
+                WHERE id=?
+                """,
+                (rerun_mode, time.time(), item_id),
+            )
+            conn.commit()
+            return row["batch_id"]
+        finally:
+            conn.close()
+
+def update_flatlay_phrase(item_id, phrase):
+    clean = re.sub(r"[\r\n。,.，、；;]+", "", (phrase or "").strip())[:120]
+    if not clean:
+        raise HTTPException(status_code=400, detail="单品短语不能为空")
+    with FLATLAY_LOCK:
+        conn = flatlay_connect()
+        try:
+            row = conn.execute("SELECT batch_id FROM flatlay_items WHERE id=?", (item_id,)).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="平面图任务不存在")
+            conn.execute("UPDATE flatlay_items SET phrase=?, updated_at=? WHERE id=?", (clean, time.time(), item_id))
+            conn.commit()
+            return row["batch_id"]
+        finally:
+            conn.close()
+
+def flatlay_vision_prompt(category):
+    rule = FLATLAY_TARGET_RULES[category]["vision"]
+    return (
+        "请识别模特图里最主要的一件服装，并只输出一个单品短语。"
+        f"{rule}"
+        "输出规则：1. 只能输出一件衣服，不能输出两件或多件。"
+        "2. 禁止出现“和”“及”“与”“+”“/”“套装”“两件”“搭配”等组合表达。"
+        "3. 不要输出颜色，不要输出解释，不要加标点，不要换行。"
+        "4. 输出长度控制在 2 到 10 个字之间。"
+        "5. 如果不确定，也必须只选最可能的一件主单品。"
+    )
+
+def flatlay_prompt_candidates(phrase, category):
+    suffix = FLATLAY_TARGET_RULES[category]["generate"]
+    prompts = [FLATLAY_PROMPT_PRIMARY, *FLATLAY_PROMPT_FALLBACKS]
+    return [f"{prompt.format(phrase=phrase.strip())}{suffix}" for prompt in prompts]
+
+async def flatlay_describe_phrase(source_image, category, model, api_key="", base_url=""):
+    data_url = reference_to_data_url(source_image)
+    if not data_url:
+        raise HTTPException(status_code=400, detail="源图不存在，无法识别单品")
+    payload = {
+        "model": model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": data_url}},
+                {"type": "text", "text": flatlay_vision_prompt(category)},
+            ],
+        }],
+        "max_tokens": 80,
+    }
+    async with httpx.AsyncClient(timeout=AI_REQUEST_TIMEOUT) as client:
+        response = await client.post(
+            qcos_flatlay_chat_url(base_url),
+            headers=qcos_flatlay_api_headers(api_key=api_key),
+            json=payload,
+        )
+        response.raise_for_status()
+        raw = response.json()
+    phrase = text_from_chat_response(raw).strip()
+    phrase = re.sub(r"[\r\n。,.，、；;]+", "", phrase)[:120]
+    if not phrase:
+        raise HTTPException(status_code=502, detail="视觉模型没有返回单品短语")
+    return phrase, raw
+
+def flatlay_save_bytes(data, prefix="flatlay_", ext=".png"):
+    filename = f"{prefix}{uuid.uuid4().hex[:10]}{ext}"
+    path = os.path.join(OUTPUT_DIR, filename)
+    with open(path, "wb") as f:
+        f.write(data)
+    return f"/output/{filename}"
+
+def flatlay_image_bytes(url):
+    path = output_file_from_url(url)
+    if not path:
+        raise HTTPException(status_code=400, detail=f"无法读取本地图片：{url}")
+    with open(path, "rb") as f:
+        return f.read(), os.path.basename(path), content_type_for_path(path)
+
+def split_flatlay_front_back(image_bytes):
+    with Image.open(BytesIO(image_bytes)) as source:
+        width, height = source.size
+        half = width // 2
+        front = source.crop((0, 0, half, height))
+        back = source.crop((half, 0, width, height))
+        front_buffer = BytesIO()
+        back_buffer = BytesIO()
+        front.save(front_buffer, format="PNG")
+        back.save(back_buffer, format="PNG")
+        return front_buffer.getvalue(), back_buffer.getvalue()
+
+async def flatlay_remove_background(image_bytes, filename, provider, variant, api_key="", base_url=""):
+    provider = normalize_flatlay_rmbg_provider(provider)
+    if provider == "none":
+        return image_bytes, "image/png", {"provider": "none"}
+    clean_key = (api_key or RMBG_API_KEY or "").strip()
+    if provider == "local_birefnet":
+        base = (base_url or RMBG_LOCAL_BASE_URL or "").strip().rstrip("/")
+        if not base:
+            raise HTTPException(status_code=400, detail="未配置本地 RMBG_BASE_URL")
+        headers = {"Authorization": f"Bearer {clean_key}"} if clean_key else {}
+        endpoint = f"{base}/v1/remove-background"
+        files = {"image": (filename or "combined.png", image_bytes, content_type_for_path(filename or "combined.png"))}
+        data = {"model_variant": normalize_flatlay_rmbg_variant(variant)}
+    else:
+        base = (base_url or RMBG_BASE_URL or "").strip().rstrip("/")
+        if not base:
+            raise HTTPException(status_code=400, detail="未配置 remove.bg/RMBG Base URL")
+        parsed = urllib.parse.urlparse(base)
+        is_remove_bg = "remove.bg" in parsed.netloc
+        if is_remove_bg:
+            endpoint = base if base.endswith("removebg") or base.endswith("v1.0/removebg") else f"{base}/v1.0/removebg"
+            headers = {"X-Api-Key": clean_key} if clean_key else {}
+            files = {"image_file": (filename or "combined.png", image_bytes, content_type_for_path(filename or "combined.png"))}
+            data = {"size": "full"}
+        else:
+            endpoint = base if base.endswith("remove-background") or base.endswith("v1/remove-background") else f"{base}/v1/remove-background"
+            headers = {"Authorization": f"Bearer {clean_key}"} if clean_key else {}
+            files = {"image": (filename or "combined.png", image_bytes, content_type_for_path(filename or "combined.png"))}
+            data = None
+    async with httpx.AsyncClient(timeout=AI_REQUEST_TIMEOUT) as client:
+        response = await client.post(endpoint, headers=headers, files=files, data=data)
+        response.raise_for_status()
+        return response.content, response.headers.get("content-type", "image/png"), {"provider": provider, "endpoint": endpoint}
+
+async def process_flatlay_item(batch, item, api_key="", base_url="", rmbg_api_key="", rmbg_base_url=""):
+    item_id = item["id"]
+    category = normalize_flatlay_category(batch.get("target_category"))
+    source = item.get("source_image") or {}
+    phrase = (item.get("phrase") or "").strip()
+    rerun_mode = item.get("rerun_mode") or "full"
+    active_step = None
+    try:
+        if not phrase or rerun_mode == "full":
+            flatlay_update_item(item_id, status="analyzing")
+            step = begin_flatlay_step(item_id, "analyze", {"model": batch.get("vision_model"), "category": category})
+            active_step = step
+            phrase, raw = await flatlay_describe_phrase(source, category, batch.get("vision_model") or FLATLAY_VISION_MODEL, api_key=api_key, base_url=base_url)
+            flatlay_update_item(item_id, phrase=phrase)
+            finish_flatlay_step(step, {"phrase": phrase, "request_id": raw.get("id") if isinstance(raw, dict) else None})
+            active_step = None
+
+        prompts = flatlay_prompt_candidates(phrase, category)
+        combined_url = ""
+        prompt_used = ""
+        last_error = None
+        for index, prompt in enumerate(prompts, start=1):
+            flatlay_update_item(item_id, status="generating", prompt=prompt)
+            step = begin_flatlay_step(item_id, "generate", {"attempt": index, "model": batch.get("generate_model")})
+            active_step = step
+            try:
+                image_data, raw = await qcos_flatlay_generate_ai_image(
+                    prompt,
+                    batch.get("size") or "1536x1024",
+                    batch.get("quality") or "auto",
+                    selected_model(batch.get("generate_model"), FLATLAY_GENERATE_MODEL),
+                    [source],
+                    api_key=api_key,
+                    base_url=base_url,
+                )
+                combined_url = await save_ai_image_to_output(image_data, prefix="flatlay_combined_")
+                prompt_used = prompt
+                finish_flatlay_step(step, {"result_url": combined_url, "request_id": raw.get("id") if isinstance(raw, dict) else None})
+                active_step = None
+                break
+            except Exception as exc:
+                last_error = exc
+                finish_flatlay_step(step, {"attempt": index}, qcos_flatlay_error_detail(exc))
+                active_step = None
+                if index == len(prompts):
+                    raise
+        if not combined_url:
+            raise last_error or HTTPException(status_code=502, detail="平面图生成失败")
+        flatlay_update_item(item_id, combined_url=combined_url, prompt=prompt_used)
+
+        split_source_url = combined_url
+        rmbg_url = ""
+        provider = normalize_flatlay_rmbg_provider(batch.get("rmbg_provider"))
+        if provider != "none":
+            flatlay_update_item(item_id, status="rmbg")
+            step = begin_flatlay_step(item_id, "rmbg", {"provider": provider, "variant": batch.get("rmbg_variant")})
+            active_step = step
+            source_bytes, filename, _ = flatlay_image_bytes(combined_url)
+            rmbg_bytes, content_type, detail = await flatlay_remove_background(
+                source_bytes,
+                filename,
+                provider,
+                batch.get("rmbg_variant") or RMBG_DEFAULT_VARIANT,
+                api_key=rmbg_api_key,
+                base_url=rmbg_base_url,
+            )
+            ext = ".png" if "png" in content_type.lower() else ".jpg"
+            rmbg_url = flatlay_save_bytes(rmbg_bytes, prefix="flatlay_rmbg_", ext=ext)
+            split_source_url = rmbg_url
+            flatlay_update_item(item_id, rmbg_url=rmbg_url)
+            finish_flatlay_step(step, {"result_url": rmbg_url, **detail})
+            active_step = None
+
+        flatlay_update_item(item_id, status="splitting")
+        step = begin_flatlay_step(item_id, "split", {"source": split_source_url})
+        active_step = step
+        split_bytes, _, _ = flatlay_image_bytes(split_source_url)
+        front_bytes, back_bytes = split_flatlay_front_back(split_bytes)
+        front_url = flatlay_save_bytes(front_bytes, prefix="flatlay_front_")
+        back_url = flatlay_save_bytes(back_bytes, prefix="flatlay_back_")
+        flatlay_update_item(
+            item_id,
+            status="completed",
+            front_url=front_url,
+            back_url=back_url,
+            error_message=None,
+            completed_at=time.time(),
+        )
+        finish_flatlay_step(step, {"front_url": front_url, "back_url": back_url})
+        active_step = None
+        record = {
+            "prompt": prompt_used,
+            "images": [front_url, back_url],
+            "timestamp": time.time(),
+            "type": "flatlay",
+            "model": batch.get("generate_model"),
+            "status": TASK_SUCCEEDED,
+            "params": {
+                "batch_id": batch.get("id"),
+                "item_id": item_id,
+                "phrase": phrase,
+                "source_image": source,
+                "combined_url": combined_url,
+                "rmbg_url": rmbg_url,
+                "front_url": front_url,
+                "back_url": back_url,
+            },
+        }
+        save_to_history(record)
+        await manager.broadcast_new_image(record)
+    except Exception as exc:
+        if active_step:
+            finish_flatlay_step(active_step, error_message=qcos_flatlay_error_detail(exc))
+        flatlay_update_item(item_id, status="failed", error_message=qcos_flatlay_error_detail(exc), completed_at=time.time())
+
+async def run_flatlay_worker(batch_id, api_key="", base_url="", rmbg_api_key="", rmbg_base_url=""):
+    try:
+        while True:
+            batch, item = claim_next_flatlay_item(batch_id)
+            if not item:
+                finalize_flatlay_if_idle(batch_id)
+                return
+            await process_flatlay_item(batch, item, api_key=api_key, base_url=base_url, rmbg_api_key=rmbg_api_key, rmbg_base_url=rmbg_base_url)
+            finalize_flatlay_if_idle(batch_id)
+    finally:
+        current = FLATLAY_WORKERS.get(batch_id)
+        if current is asyncio.current_task():
+            FLATLAY_WORKERS.pop(batch_id, None)
+
+def start_flatlay_worker(batch_id, api_key="", base_url="", rmbg_api_key="", rmbg_base_url=""):
+    current = FLATLAY_WORKERS.get(batch_id)
+    if current and not current.done():
+        return
+    FLATLAY_WORKERS[batch_id] = asyncio.create_task(run_flatlay_worker(
+        batch_id,
+        api_key=api_key,
+        base_url=base_url,
+        rmbg_api_key=rmbg_api_key,
+        rmbg_base_url=rmbg_base_url,
+    ))
+
+@app.get("/api/flatlay/batches")
+async def flatlay_batches(limit: int = 50):
+    init_flatlay_db()
+    return {"batches": list_flatlay_batches(limit)}
+
+@app.post("/api/flatlay/batches")
+async def flatlay_create_batch(payload: FlatlayCreateRequest, x_comfly_api_key: str = Header(default=""), x_comfly_base_url: str = Header(default="")):
+    init_flatlay_db()
+    if payload.autostart:
+        qcos_flatlay_api_headers(json_body=False, api_key=x_comfly_api_key)
+    batch_id = create_flatlay_batch(payload)
+    if payload.autostart and prepare_flatlay_run(batch_id):
+        start_flatlay_worker(
+            batch_id,
+            api_key=x_comfly_api_key,
+            base_url=x_comfly_base_url,
+            rmbg_api_key=payload.rmbg_api_key,
+            rmbg_base_url=payload.rmbg_base_url,
+        )
+    return get_flatlay_detail(batch_id)
+
+@app.get("/api/flatlay/batches/{batch_id}")
+async def flatlay_get_batch(batch_id: str):
+    init_flatlay_db()
+    return get_flatlay_detail(batch_id)
+
+@app.post("/api/flatlay/batches/{batch_id}/pause")
+async def flatlay_pause_batch(batch_id: str):
+    init_flatlay_db()
+    set_flatlay_batch_status(batch_id, "paused")
+    return get_flatlay_detail(batch_id)
+
+@app.post("/api/flatlay/batches/{batch_id}/resume")
+async def flatlay_resume_batch(batch_id: str, payload: FlatlayControlRequest, x_comfly_api_key: str = Header(default=""), x_comfly_base_url: str = Header(default="")):
+    init_flatlay_db()
+    qcos_flatlay_api_headers(json_body=False, api_key=x_comfly_api_key)
+    if prepare_flatlay_run(batch_id):
+        start_flatlay_worker(
+            batch_id,
+            api_key=x_comfly_api_key,
+            base_url=x_comfly_base_url,
+            rmbg_api_key=payload.rmbg_api_key,
+            rmbg_base_url=payload.rmbg_base_url,
+        )
+    return get_flatlay_detail(batch_id)
+
+@app.post("/api/flatlay/batches/{batch_id}/retry-failed")
+async def flatlay_retry_failed(batch_id: str, payload: FlatlayControlRequest, x_comfly_api_key: str = Header(default=""), x_comfly_base_url: str = Header(default="")):
+    init_flatlay_db()
+    qcos_flatlay_api_headers(json_body=False, api_key=x_comfly_api_key)
+    reset_flatlay_failed_items(batch_id)
+    if prepare_flatlay_run(batch_id):
+        start_flatlay_worker(
+            batch_id,
+            api_key=x_comfly_api_key,
+            base_url=x_comfly_base_url,
+            rmbg_api_key=payload.rmbg_api_key,
+            rmbg_base_url=payload.rmbg_base_url,
+        )
+    return get_flatlay_detail(batch_id)
+
+@app.patch("/api/flatlay/items/{item_id}/phrase")
+async def flatlay_update_phrase(item_id: str, payload: FlatlayPhraseRequest):
+    init_flatlay_db()
+    batch_id = update_flatlay_phrase(item_id, payload.phrase)
+    return get_flatlay_detail(batch_id)
+
+@app.post("/api/flatlay/items/{item_id}/rerun")
+async def flatlay_rerun_item(item_id: str, payload: FlatlayControlRequest, x_comfly_api_key: str = Header(default=""), x_comfly_base_url: str = Header(default="")):
+    init_flatlay_db()
+    qcos_flatlay_api_headers(json_body=False, api_key=x_comfly_api_key)
+    batch_id = reset_flatlay_item(item_id, mode=payload.mode)
+    if prepare_flatlay_run(batch_id):
+        start_flatlay_worker(
+            batch_id,
+            api_key=x_comfly_api_key,
+            base_url=x_comfly_base_url,
+            rmbg_api_key=payload.rmbg_api_key,
+            rmbg_base_url=payload.rmbg_base_url,
+        )
+    return get_flatlay_detail(batch_id)
+
+@app.on_event("startup")
+async def qcos_flatlay_startup():
+    init_flatlay_db()
+    recover_flatlay_state()
+
+
+# --- End QCOS Flatlay 模特图转平面图 ---
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -133,7 +133,9 @@
 - `PATCH /api/flatlay/items/nonexistent/phrase` → 参照源定义的错误状态码
 - 配置端点响应含 `flatlay_vision_model` 字段
 
-- [ ] **Step 1–5：同 Task 2 节奏**
+- [x] **Step 1–5：同 Task 2 节奏**
+
+> 进展（2026-07-30）：已按 design/v2.1 契约移植 flatlay 的模型、SQLite 状态机、worker、7 条路由及配置字段，新增 3 个 API 契约测试；同时恢复 origin/main 在 `a581fbb` 误删但既有测试仍要求的 canvas log cleanup 实现。`python3 -m py_compile main.py` 与全量 28 项测试均通过。
 
 ### Task 6: SPA 挂载 + 前端构建 + 契约核对
 
