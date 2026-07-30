@@ -18261,6 +18261,637 @@ def run_workflow(name: str, payload: WorkflowRunRequest):
     )
     return generate(req)
 
+
+# --- QCOS Gallery 资产库 ---
+
+from task_status import TASK_SUCCEEDED
+
+GALLERY_META_FILE = os.path.join(DATA_DIR, "gallery_meta.json")
+GALLERY_LOCK = Lock()
+
+GALLERY_SOURCE_LABELS = {
+    "zimage": "Text to image",
+    "cloud": "Text to image",
+    "enhance": "Detail enhance",
+    "klein": "Image edit",
+    "angle": "Angle control",
+    "online": "Online generate",
+    "batch_tryon": "Batch try-on",
+    "flatlay": "Flatlay",
+    "chat": "Chat",
+    "canvas": "Canvas",
+}
+
+GALLERY_ARTIFACT_LABELS = {
+    "image": "Image",
+    "result": "Result",
+    "combined": "Combined",
+    "rmbg": "RMBG",
+    "front": "Front",
+    "back": "Back",
+    "source": "Source",
+}
+
+
+class GalleryFavoriteRequest(BaseModel):
+    favorite: bool = True
+
+
+class GalleryDownloadRequest(BaseModel):
+    asset_ids: List[str] = []
+
+
+def gallery_meta():
+    with GALLERY_LOCK:
+        if not os.path.exists(GALLERY_META_FILE):
+            return {"assets": {}}
+        try:
+            with open(GALLERY_META_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and isinstance(data.get("assets"), dict):
+                return data
+        except Exception:
+            pass
+        return {"assets": {}}
+
+
+def save_gallery_meta(data):
+    with GALLERY_LOCK:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(GALLERY_META_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def update_gallery_meta(asset_id, **fields):
+    data = gallery_meta()
+    assets = data.setdefault("assets", {})
+    current = assets.setdefault(asset_id, {})
+    current.update(fields)
+    current["updated_at"] = time.time()
+    save_gallery_meta(data)
+    return current
+
+
+def normalize_epoch(value):
+    try:
+        ts = float(value or 0)
+    except Exception:
+        return 0
+    if ts > 10_000_000_000:
+        ts = ts / 1000
+    return ts
+
+
+def gallery_asset_id(url):
+    clean = (url or "").strip()
+    return "ga_" + hashlib.sha1(clean.encode("utf-8")).hexdigest()[:18]
+
+
+def gallery_source_label(source):
+    return GALLERY_SOURCE_LABELS.get(source or "", (source or "Unknown").replace("_", " ").title())
+
+
+def gallery_artifact_label(kind):
+    return GALLERY_ARTIFACT_LABELS.get(kind or "image", (kind or "image").replace("_", " ").title())
+
+
+def gallery_filename(url):
+    if not url:
+        return "asset"
+    parsed = urllib.parse.urlparse(url)
+    name = os.path.basename(urllib.parse.unquote(parsed.path or url))
+    return name or "asset"
+
+
+def gallery_file_size(url):
+    path = output_file_from_url(url)
+    if not path:
+        return 0
+    try:
+        return os.path.getsize(path)
+    except Exception:
+        return 0
+
+
+def gallery_image_size(url):
+    path = output_file_from_url(url)
+    if not path:
+        return {"width": 0, "height": 0}
+    try:
+        with Image.open(path) as img:
+            return {"width": int(img.width), "height": int(img.height)}
+    except Exception:
+        return {"width": 0, "height": 0}
+
+
+def gallery_asset(url, source, artifact_type="image", title="", prompt="", model="", status="", created_at=0, updated_at=0, **extra):
+    clean_url = (url or "").strip()
+    if not clean_url:
+        return None
+    image_size = gallery_image_size(clean_url)
+    asset = {
+        "id": gallery_asset_id(clean_url),
+        "url": clean_url,
+        "filename": gallery_filename(clean_url),
+        "source": source or "unknown",
+        "sources": [source or "unknown"],
+        "source_label": gallery_source_label(source),
+        "source_labels": [gallery_source_label(source)],
+        "artifact_type": artifact_type or "image",
+        "artifact_label": gallery_artifact_label(artifact_type or "image"),
+        "title": title or gallery_filename(clean_url),
+        "prompt": prompt or "",
+        "model": model or "",
+        "status": status or TASK_SUCCEEDED,
+        "created_at": normalize_epoch(created_at) or time.time(),
+        "updated_at": normalize_epoch(updated_at) or normalize_epoch(created_at) or time.time(),
+        "width": image_size["width"],
+        "height": image_size["height"],
+        "size_bytes": gallery_file_size(clean_url),
+        "contexts": [],
+    }
+    asset.update(extra)
+    asset["contexts"].append({
+        "source": asset["source"],
+        "source_label": asset["source_label"],
+        "batch_id": asset.get("batch_id", ""),
+        "item_id": asset.get("item_id", ""),
+        "task_id": asset.get("task_id", ""),
+        "canvas_id": asset.get("canvas_id", ""),
+        "canvas_title": asset.get("canvas_title", ""),
+    })
+    return asset
+
+
+def merge_gallery_asset(assets, candidate):
+    if not candidate:
+        return
+    existing = assets.get(candidate["id"])
+    if not existing:
+        assets[candidate["id"]] = candidate
+        return
+    for source in candidate.get("sources", []):
+        if source not in existing["sources"]:
+            existing["sources"].append(source)
+            existing["source_labels"].append(gallery_source_label(source))
+    seen_contexts = {
+        (
+            ctx.get("source", ""),
+            ctx.get("batch_id", ""),
+            ctx.get("item_id", ""),
+            ctx.get("task_id", ""),
+            ctx.get("canvas_id", ""),
+        )
+        for ctx in existing.get("contexts", [])
+    }
+    for ctx in candidate.get("contexts", []):
+        key = (
+            ctx.get("source", ""),
+            ctx.get("batch_id", ""),
+            ctx.get("item_id", ""),
+            ctx.get("task_id", ""),
+            ctx.get("canvas_id", ""),
+        )
+        if key not in seen_contexts:
+            existing["contexts"].append(ctx)
+            seen_contexts.add(key)
+    existing["updated_at"] = max(existing.get("updated_at", 0), candidate.get("updated_at", 0))
+    existing["created_at"] = max(existing.get("created_at", 0), candidate.get("created_at", 0))
+    for key in ["prompt", "phrase", "model", "batch_id", "item_id", "task_id", "group_id", "canvas_id", "canvas_title"]:
+        if not existing.get(key) and candidate.get(key):
+            existing[key] = candidate[key]
+    if existing.get("artifact_type") == "image" and candidate.get("artifact_type") != "image":
+        existing["artifact_type"] = candidate["artifact_type"]
+        existing["artifact_label"] = candidate["artifact_label"]
+
+
+def read_history_records():
+    if not os.path.exists(HISTORY_FILE):
+        return []
+    try:
+        with HISTORY_LOCK:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def gallery_refs_from_params(params):
+    refs = []
+    if not isinstance(params, dict):
+        return refs
+    for key in ["reference_images", "clothing_images"]:
+        items = params.get(key) or []
+        if isinstance(items, list):
+            refs.extend(item for item in items if isinstance(item, dict) and item.get("url"))
+    for key in ["model_image", "source_image"]:
+        item = params.get(key)
+        if isinstance(item, dict) and item.get("url"):
+            refs.append(item)
+    return refs[:12]
+
+
+def flatlay_artifact_type_for_url(url, params):
+    if not isinstance(params, dict):
+        return "image"
+    for key, kind in [
+        ("combined_url", "combined"),
+        ("rmbg_url", "rmbg"),
+        ("front_url", "front"),
+        ("back_url", "back"),
+    ]:
+        if params.get(key) == url:
+            return kind
+    return "image"
+
+
+def add_history_gallery_assets(assets):
+    for record in read_history_records():
+        images = record.get("images") or []
+        if not isinstance(images, list):
+            continue
+        source = record.get("type") or "zimage"
+        params = record.get("params") if isinstance(record.get("params"), dict) else {}
+        for index, url in enumerate(images):
+            artifact = flatlay_artifact_type_for_url(url, params) if source == "flatlay" else ("result" if source == "batch_tryon" else "image")
+            title = f"{gallery_source_label(source)} · {gallery_artifact_label(artifact)}"
+            merge_gallery_asset(assets, gallery_asset(
+                url=url,
+                source=source,
+                artifact_type=artifact,
+                title=title,
+                prompt=record.get("prompt", ""),
+                model=record.get("model", ""),
+                status=record.get("status", TASK_SUCCEEDED),
+                created_at=record.get("timestamp"),
+                updated_at=record.get("timestamp"),
+                batch_id=params.get("batch_id", ""),
+                item_id=params.get("item_id", ""),
+                task_id=params.get("task_id", ""),
+                group_id=params.get("group_id", ""),
+                phrase=params.get("phrase", ""),
+                image_index=index,
+                params=params,
+                source_images=gallery_refs_from_params(params),
+            ))
+
+
+def add_flatlay_gallery_assets(assets):
+    init_flatlay_db()
+    with FLATLAY_LOCK:
+        conn = flatlay_connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT i.*, b.title AS batch_title, b.generate_model, b.target_category, b.created_at AS batch_created_at
+                FROM flatlay_items i
+                JOIN flatlay_batches b ON b.id = i.batch_id
+                ORDER BY i.updated_at DESC
+                """
+            ).fetchall()
+        finally:
+            conn.close()
+    for row in rows:
+        item = flatlay_item_record(row)
+        source_image = item.get("source_image") or {}
+        urls = [
+            ("combined", item.get("combined_url")),
+            ("rmbg", item.get("rmbg_url")),
+            ("front", item.get("front_url")),
+            ("back", item.get("back_url")),
+        ]
+        for artifact, url in urls:
+            if not url:
+                continue
+            merge_gallery_asset(assets, gallery_asset(
+                url=url,
+                source="flatlay",
+                artifact_type=artifact,
+                title=f"{row['batch_title'] or 'Flatlay'} · {gallery_artifact_label(artifact)}",
+                prompt=item.get("prompt", ""),
+                model=row["generate_model"] or "",
+                status=item.get("status", ""),
+                created_at=item.get("completed_at") or item.get("updated_at") or item.get("created_at"),
+                updated_at=item.get("updated_at"),
+                batch_id=item.get("batch_id", ""),
+                item_id=item.get("id", ""),
+                item_index=item.get("item_index"),
+                batch_title=row["batch_title"] or "",
+                phrase=item.get("phrase", ""),
+                target_category=row["target_category"] or "",
+                source_images=[source_image] if source_image.get("url") else [],
+            ))
+
+
+def add_batch_tryon_gallery_assets(assets):
+    init_batch_tryon_db()
+    with BATCH_TRYON_LOCK:
+        conn = batch_tryon_connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT t.*, b.title AS batch_title, b.model, b.pairing_mode, g.name AS group_name
+                FROM batch_tryon_tasks t
+                JOIN batch_tryon_batches b ON b.id = t.batch_id
+                LEFT JOIN batch_tryon_groups g ON g.id = t.group_id
+                WHERE t.result_url IS NOT NULL AND t.result_url != ''
+                ORDER BY t.updated_at DESC
+                """
+            ).fetchall()
+        finally:
+            conn.close()
+    for row in rows:
+        task = batch_tryon_task_record(row)
+        refs = [*task.get("clothing_images", []), task.get("model_image") or {}]
+        merge_gallery_asset(assets, gallery_asset(
+            url=task.get("result_url"),
+            source="batch_tryon",
+            artifact_type="result",
+            title=f"{row['batch_title'] or 'Batch try-on'} · Result",
+            prompt="",
+            model=row["model"] or "",
+            status=task.get("status", ""),
+            created_at=task.get("completed_at") or task.get("updated_at") or task.get("created_at"),
+            updated_at=task.get("updated_at"),
+            batch_id=task.get("batch_id", ""),
+            task_id=task.get("id", ""),
+            group_id=task.get("group_id", ""),
+            group_name=row["group_name"] or "",
+            pairing_mode=row["pairing_mode"] or "",
+            source_images=[ref for ref in refs if isinstance(ref, dict) and ref.get("url")],
+        ))
+
+
+def add_chat_gallery_assets(assets):
+    for root, _, files in os.walk(CONVERSATION_DIR):
+        for filename in files:
+            if not filename.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(root, filename), "r", encoding="utf-8") as f:
+                    conversation = json.load(f)
+            except Exception:
+                continue
+            for message in conversation.get("messages", []):
+                url = message.get("image_url")
+                if not url:
+                    continue
+                merge_gallery_asset(assets, gallery_asset(
+                    url=url,
+                    source="chat",
+                    artifact_type="image",
+                    title=conversation.get("title") or "Chat image",
+                    prompt=message.get("content", ""),
+                    model=message.get("model", ""),
+                    status=message.get("status", TASK_SUCCEEDED),
+                    created_at=message.get("created_at"),
+                    updated_at=conversation.get("updated_at") or message.get("created_at"),
+                    conversation_id=conversation.get("id", ""),
+                    conversation_title=conversation.get("title", ""),
+                ))
+
+
+def add_canvas_gallery_assets(assets):
+    for record in iter_canvas_records(include_deleted=False):
+        try:
+            canvas = load_canvas(record["id"])
+        except Exception:
+            continue
+        for node in canvas.get("nodes", []):
+            if node.get("type") != "output":
+                continue
+            for index, image in enumerate(node.get("images") or []):
+                url = canvas_asset_url_value(image)
+                merge_gallery_asset(assets, gallery_asset(
+                    url=url,
+                    source="canvas",
+                    artifact_type="result",
+                    title=canvas.get("title") or "Canvas output",
+                    prompt="",
+                    model="",
+                    status=TASK_SUCCEEDED,
+                    created_at=canvas.get("updated_at"),
+                    updated_at=canvas.get("updated_at"),
+                    canvas_id=canvas.get("id", ""),
+                    canvas_title=canvas.get("title", ""),
+                    node_id=node.get("id", ""),
+                    image_index=index,
+                ))
+
+
+def gallery_dependencies_available(*names):
+    return all(name in globals() for name in names)
+
+
+def all_gallery_assets(include_hidden=False):
+    assets = {}
+    if gallery_dependencies_available("init_flatlay_db", "FLATLAY_LOCK", "flatlay_connect", "flatlay_item_record"):
+        add_flatlay_gallery_assets(assets)
+    if gallery_dependencies_available("init_batch_tryon_db", "BATCH_TRYON_LOCK", "batch_tryon_connect", "batch_tryon_task_record"):
+        add_batch_tryon_gallery_assets(assets)
+    add_history_gallery_assets(assets)
+    add_chat_gallery_assets(assets)
+    add_canvas_gallery_assets(assets)
+    meta_assets = gallery_meta().get("assets", {})
+    result = []
+    for asset in assets.values():
+        meta = meta_assets.get(asset["id"], {})
+        asset["favorite"] = bool(meta.get("favorite"))
+        asset["hidden"] = bool(meta.get("hidden"))
+        if asset["hidden"] and not include_hidden:
+            continue
+        result.append(asset)
+    return sorted(result, key=lambda item: item.get("created_at", 0), reverse=True)
+
+
+def find_gallery_asset(asset_id, include_hidden=False):
+    for asset in all_gallery_assets(include_hidden=include_hidden):
+        if asset["id"] == asset_id:
+            return asset
+    return None
+
+
+def csv_values(value):
+    if not value or value == "all":
+        return set()
+    return {part.strip() for part in str(value).split(",") if part.strip() and part.strip() != "all"}
+
+
+def gallery_date_cutoff(date_filter):
+    now = time.time()
+    if date_filter == "today":
+        local = time.localtime(now)
+        return time.mktime((local.tm_year, local.tm_mon, local.tm_mday, 0, 0, 0, local.tm_wday, local.tm_yday, local.tm_isdst))
+    if date_filter == "7d":
+        return now - 7 * 24 * 3600
+    if date_filter == "30d":
+        return now - 30 * 24 * 3600
+    return 0
+
+
+def gallery_matches_query(asset, query):
+    q = (query or "").strip().lower()
+    if not q:
+        return True
+    haystack = " ".join(str(asset.get(key, "")) for key in [
+        "title", "prompt", "phrase", "model", "filename", "batch_id", "item_id",
+        "task_id", "group_id", "canvas_title", "conversation_title"
+    ])
+    haystack += " " + " ".join(asset.get("sources") or [])
+    return q in haystack.lower()
+
+
+def filter_gallery_assets(assets, q="", source="all", artifact_type="all", status="all", favorite: Optional[bool] = None, model="all", date="all"):
+    sources = csv_values(source)
+    artifacts = csv_values(artifact_type)
+    statuses = csv_values(status)
+    models = csv_values(model)
+    cutoff = gallery_date_cutoff(date)
+    result = []
+    for asset in assets:
+        if sources and not (set(asset.get("sources") or []) & sources):
+            continue
+        if artifacts and asset.get("artifact_type") not in artifacts:
+            continue
+        if statuses and asset.get("status") not in statuses:
+            continue
+        if favorite is not None and bool(asset.get("favorite")) != favorite:
+            continue
+        if models and asset.get("model") not in models:
+            continue
+        if cutoff and asset.get("created_at", 0) < cutoff:
+            continue
+        if not gallery_matches_query(asset, q):
+            continue
+        result.append(asset)
+    return result
+
+
+def gallery_facets(assets):
+    sources = {}
+    artifacts = {}
+    statuses = {}
+    models = {}
+    favorites = 0
+    for asset in assets:
+        if asset.get("favorite"):
+            favorites += 1
+        for source in asset.get("sources") or [asset.get("source", "unknown")]:
+            sources[source] = sources.get(source, 0) + 1
+        artifact = asset.get("artifact_type") or "image"
+        artifacts[artifact] = artifacts.get(artifact, 0) + 1
+        status = asset.get("status") or TASK_SUCCEEDED
+        statuses[status] = statuses.get(status, 0) + 1
+        model = asset.get("model") or ""
+        if model:
+            models[model] = models.get(model, 0) + 1
+    return {
+        "sources": [{"value": key, "label": gallery_source_label(key), "count": count} for key, count in sorted(sources.items())],
+        "artifact_types": [{"value": key, "label": gallery_artifact_label(key), "count": count} for key, count in sorted(artifacts.items())],
+        "statuses": [{"value": key, "label": key, "count": count} for key, count in sorted(statuses.items())],
+        "models": [{"value": key, "label": key, "count": count} for key, count in sorted(models.items())],
+        "favorites": favorites,
+    }
+
+
+@app.get("/api/gallery/assets")
+async def gallery_assets(
+    q: str = "",
+    source: str = "all",
+    artifact_type: str = "all",
+    status: str = "all",
+    favorite: Optional[bool] = None,
+    model: str = "all",
+    date: str = "all",
+    page: int = 1,
+    page_size: int = 36,
+):
+    page = max(1, int(page or 1))
+    page_size = max(12, min(int(page_size or 36), 96))
+    all_assets = all_gallery_assets(include_hidden=False)
+    filtered = filter_gallery_assets(
+        all_assets,
+        q=q,
+        source=source,
+        artifact_type=artifact_type,
+        status=status,
+        favorite=favorite,
+        model=model,
+        date=date,
+    )
+    total = len(filtered)
+    pages = max(1, (total + page_size - 1) // page_size)
+    page = min(page, pages)
+    start = (page - 1) * page_size
+    end = start + page_size
+    return {
+        "assets": filtered[start:end],
+        "page": page,
+        "page_size": page_size,
+        "pages": pages,
+        "total": total,
+        "facets": gallery_facets(all_assets),
+    }
+
+
+@app.patch("/api/gallery/assets/{asset_id}/favorite")
+async def gallery_favorite(asset_id: str, payload: GalleryFavoriteRequest):
+    asset = find_gallery_asset(asset_id, include_hidden=True)
+    if not asset:
+        raise HTTPException(status_code=404, detail="资产不存在")
+    update_gallery_meta(asset_id, favorite=bool(payload.favorite))
+    asset["favorite"] = bool(payload.favorite)
+    return {"ok": True, "asset": asset}
+
+
+@app.delete("/api/gallery/assets/{asset_id}")
+async def gallery_hide_asset(asset_id: str, delete_file: bool = False):
+    asset = find_gallery_asset(asset_id, include_hidden=True)
+    if not asset:
+        raise HTTPException(status_code=404, detail="资产不存在")
+    update_gallery_meta(asset_id, hidden=True)
+    if delete_file:
+        path = output_file_from_url(asset.get("url", ""))
+        if path and os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"删除文件失败：{exc}") from exc
+    return {"ok": True}
+
+
+@app.post("/api/gallery/download")
+async def gallery_download(payload: GalleryDownloadRequest):
+    asset_ids = [asset_id for asset_id in payload.asset_ids[:200] if asset_id]
+    if not asset_ids:
+        raise HTTPException(status_code=400, detail="请选择要下载的资产")
+    available = {asset["id"]: asset for asset in all_gallery_assets(include_hidden=False)}
+    buffer = BytesIO()
+    used_names = set()
+    count = 0
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for asset_id in asset_ids:
+            asset = available.get(asset_id)
+            if not asset:
+                continue
+            path = output_file_from_url(asset.get("url", ""))
+            if not path:
+                continue
+            name = gallery_filename(asset.get("url", ""))
+            if name in used_names:
+                root, ext = os.path.splitext(name)
+                name = f"{root}-{count + 1}{ext}"
+            used_names.add(name)
+            archive.write(path, arcname=name)
+            count += 1
+    if count == 0:
+        raise HTTPException(status_code=404, detail="没有可下载的本地文件")
+    buffer.seek(0)
+    headers = {"Content-Disposition": f'attachment; filename="feebee-gallery-{int(time.time())}.zip"'}
+    return StreamingResponse(buffer, media_type="application/zip", headers=headers)
+
+
 # --- origin/main canvas log cleanup regression restore ---
 
 class DeleteCanvasLogRequest(BaseModel):

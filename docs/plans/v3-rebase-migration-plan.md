@@ -66,11 +66,13 @@
 - `PATCH /api/gallery/assets/nonexistent/favorite` → 参照源定义的错误状态码（读源确认，通常 404）
 - `DELETE /api/gallery/assets/nonexistent` → 参照源定义的错误状态码
 
-- [ ] **Step 1: 写失败测试**
-- [ ] **Step 2: 运行确认失败（404 Not Found 路由级）**
-- [ ] **Step 3: 移植实现**
-- [ ] **Step 4: 测试 + py_compile + 上游既有测试全通过**
-- [ ] **Step 5: Commit**
+- [x] **Step 1: 写失败测试**
+- [x] **Step 2: 运行确认失败（404 Not Found 路由级）**
+- [x] **Step 3: 移植实现**
+- [x] **Step 4: 测试 + py_compile + 上游既有测试全通过**
+- [x] **Step 5: Commit**
+
+> 进展（2026-07-30）：已移植 gallery 元数据锁、资产聚合/过滤/分页辅助函数及 GET/PATCH/DELETE/POST 四条路由；新增分页与两个 404 契约测试。`main.py` 编译通过，gallery 和 canvas log cleanup focused 测试共 17 项通过，并随本任务提交。
 
 ### Task 3: canvas-video-tasks 模块
 
