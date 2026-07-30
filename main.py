@@ -18605,6 +18605,1340 @@ async def get_canvas_video_task(task_id: str):
         )
     return await maybe_refresh_canvas_video_task(task_id, task)
 
+# --- QCOS Batch try-on 批量试穿 ---
+
+import sqlite3
+
+from task_status import TASK_SUCCEEDED
+
+
+BATCH_TRYON_DEFAULT_MODEL = "gemini-3.1-flash-image-preview"
+BATCH_TRYON_DEFAULT_SIZE = "auto"
+BATCH_TRYON_RATIO_SIZES = {"1:1", "2:3", "3:4"}
+BATCH_TRYON_SIZE_VALUES = {BATCH_TRYON_DEFAULT_SIZE, *BATCH_TRYON_RATIO_SIZES}
+BATCH_TRYON_LOCK = Lock()
+BATCH_TRYON_DB = os.path.join(DATA_DIR, "batch_tryon.db")
+BATCH_TRYON_WORKERS: Dict[str, asyncio.Task] = {}
+
+
+class BatchTryonImage(BaseModel):
+    url: str
+    name: str = ""
+    id: str = ""
+
+
+class BatchTryonGroup(BaseModel):
+    id: str = ""
+    name: str = "Group"
+    clothing_images: List[BatchTryonImage] = []
+    model_images: List[BatchTryonImage] = []
+
+
+class BatchTryonCreateRequest(BaseModel):
+    title: str = "Batch try-on"
+    prompt: str = Field(min_length=1, max_length=4000)
+    model: str = BATCH_TRYON_DEFAULT_MODEL
+    size: str = BATCH_TRYON_DEFAULT_SIZE
+    quality: str = "auto"
+    pairing_mode: str = "pair"
+    groups: List[BatchTryonGroup] = []
+    clothing_images: List[BatchTryonImage] = []
+    model_images: List[BatchTryonImage] = []
+    autostart: bool = True
+
+
+class BatchTryonControlRequest(BaseModel):
+    model: str = ""
+
+
+def batch_tryon_connect():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    conn = sqlite3.connect(BATCH_TRYON_DB)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_batch_tryon_db():
+    with BATCH_TRYON_LOCK:
+        conn = batch_tryon_connect()
+        try:
+            conn.executescript(
+                """
+                PRAGMA journal_mode=WAL;
+                CREATE TABLE IF NOT EXISTS batch_tryon_batches (
+                    id TEXT PRIMARY KEY,
+                    title TEXT,
+                    pairing_mode TEXT,
+                    prompt TEXT,
+                    model TEXT,
+                    size TEXT,
+                    quality TEXT,
+                    status TEXT,
+                    created_at REAL,
+                    updated_at REAL
+                );
+                CREATE TABLE IF NOT EXISTS batch_tryon_tasks (
+                    id TEXT PRIMARY KEY,
+                    batch_id TEXT NOT NULL,
+                    group_id TEXT,
+                    task_index INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    clothing_json TEXT NOT NULL,
+                    model_json TEXT NOT NULL,
+                    result_url TEXT,
+                    error_message TEXT,
+                    attempts INTEGER DEFAULT 0,
+                    created_at REAL,
+                    updated_at REAL,
+                    started_at REAL,
+                    completed_at REAL
+                );
+                CREATE TABLE IF NOT EXISTS batch_tryon_groups (
+                    id TEXT PRIMARY KEY,
+                    batch_id TEXT NOT NULL,
+                    group_index INTEGER NOT NULL,
+                    name TEXT,
+                    clothing_json TEXT NOT NULL,
+                    model_json TEXT NOT NULL,
+                    collapsed INTEGER DEFAULT 0,
+                    created_at REAL,
+                    updated_at REAL
+                );
+                CREATE INDEX IF NOT EXISTS idx_batch_tryon_tasks_batch ON batch_tryon_tasks(batch_id, task_index);
+                CREATE INDEX IF NOT EXISTS idx_batch_tryon_tasks_status ON batch_tryon_tasks(status);
+                CREATE INDEX IF NOT EXISTS idx_batch_tryon_groups_batch ON batch_tryon_groups(batch_id, group_index);
+                """
+            )
+            task_columns = {
+                row["name"]
+                for row in conn.execute(
+                    "PRAGMA table_info(batch_tryon_tasks)"
+                ).fetchall()
+            }
+            if "group_id" not in task_columns:
+                conn.execute(
+                    "ALTER TABLE batch_tryon_tasks ADD COLUMN group_id TEXT"
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def recover_batch_tryon_state():
+    with BATCH_TRYON_LOCK:
+        conn = batch_tryon_connect()
+        try:
+            now = time.time()
+            conn.execute(
+                """
+                UPDATE batch_tryon_tasks
+                SET status='pending', updated_at=?, error_message='Recovered after server restart.'
+                WHERE status='running'
+                """,
+                (now,),
+            )
+            conn.execute(
+                """
+                UPDATE batch_tryon_batches
+                SET status='paused', updated_at=?
+                WHERE status='running'
+                """,
+                (now,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def batch_tryon_json(value):
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def normalize_batch_tryon_image(image: BatchTryonImage):
+    item = image.model_dump()
+    url = (item.get("url") or "").strip()
+    if not output_file_from_url(url):
+        raise HTTPException(
+            status_code=400,
+            detail=f"图片必须先上传到本地输出目录：{url}",
+        )
+    return {
+        "id": (item.get("id") or uuid.uuid4().hex)[:80],
+        "url": url,
+        "name": (item.get("name") or os.path.basename(url))[:160],
+    }
+
+
+def normalize_batch_tryon_groups(payload: BatchTryonCreateRequest):
+    source_groups = payload.groups or [
+        BatchTryonGroup(
+            id="",
+            name=payload.title or "Batch try-on",
+            clothing_images=payload.clothing_images,
+            model_images=payload.model_images,
+        )
+    ]
+    groups = []
+    for index, group in enumerate(source_groups, start=1):
+        clothing = [
+            normalize_batch_tryon_image(item)
+            for item in group.clothing_images
+        ]
+        models = [
+            normalize_batch_tryon_image(item)
+            for item in group.model_images
+        ]
+        group_id = (
+            group.id or f"btg_{uuid.uuid4().hex[:10]}"
+        ).strip()[:80]
+        groups.append({
+            "id": group_id or f"btg_{uuid.uuid4().hex[:10]}",
+            "source_key": f"{index}:{group_id or uuid.uuid4().hex}",
+            "index": index,
+            "name": (
+                (group.name or f"Group {index}").strip()[:120]
+                or f"Group {index}"
+            ),
+            "clothing_images": clothing,
+            "model_images": models,
+        })
+    return groups
+
+
+def normalize_batch_tryon_size(value):
+    size = (value or "").strip()
+    if not size:
+        return BATCH_TRYON_DEFAULT_SIZE
+    return (
+        size
+        if size in BATCH_TRYON_SIZE_VALUES
+        else BATCH_TRYON_DEFAULT_SIZE
+    )
+
+
+def batch_tryon_generation_fields(value):
+    size = normalize_batch_tryon_size(value)
+    if size in BATCH_TRYON_RATIO_SIZES:
+        return BATCH_TRYON_DEFAULT_SIZE, {
+            "aspect_ratio": size,
+            "aspectRatio": size,
+        }
+    return size, {}
+
+
+def build_batch_tryon_pairs(
+    clothing_images,
+    model_images,
+    pairing_mode,
+):
+    mode = (pairing_mode or "pair").strip()
+    if not clothing_images or not model_images:
+        raise HTTPException(
+            status_code=400,
+            detail="请先添加服装和模特图片",
+        )
+
+    pairs = []
+    if mode == "pair":
+        if len(clothing_images) != len(model_images):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "1:1 模式要求服装和模特数量相同，当前 "
+                    f"{len(clothing_images)} vs {len(model_images)}"
+                ),
+            )
+        pairs = [
+            ([clothing], model)
+            for clothing, model in zip(clothing_images, model_images)
+        ]
+    elif mode == "fixedModel":
+        pairs = [
+            ([clothing], model_images[0])
+            for clothing in clothing_images
+        ]
+    elif mode == "fixedClothing":
+        pairs = [
+            ([clothing_images[0]], model)
+            for model in model_images
+        ]
+    elif mode == "multiClothing":
+        pairs = [(list(clothing_images), model_images[0])]
+    elif mode == "matrix":
+        pairs = [
+            ([clothing], model)
+            for clothing in clothing_images
+            for model in model_images
+        ]
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的配对模式：{mode}",
+        )
+
+    if len(pairs) > 500:
+        raise HTTPException(
+            status_code=400,
+            detail="单个批次最多 500 个任务，请拆分后再生成",
+        )
+    return mode, pairs
+
+
+def batch_tryon_counts_for_conn(conn, batch_id):
+    rows = conn.execute(
+        """
+        SELECT status, COUNT(*) AS count
+        FROM batch_tryon_tasks
+        WHERE batch_id=?
+        GROUP BY status
+        """,
+        (batch_id,),
+    ).fetchall()
+    counts = {
+        row["status"]: int(row["count"])
+        for row in rows
+    }
+    total = sum(counts.values())
+    return {
+        "total": total,
+        "pending": counts.get("pending", 0),
+        "running": counts.get("running", 0),
+        "completed": counts.get("completed", 0),
+        "failed": counts.get("failed", 0),
+    }
+
+
+def batch_tryon_batch_record(row, counts=None):
+    data = dict(row)
+    data["counts"] = counts or {
+        "total": 0,
+        "pending": 0,
+        "running": 0,
+        "completed": 0,
+        "failed": 0,
+    }
+    return data
+
+
+def batch_tryon_task_record(row):
+    data = dict(row)
+    try:
+        data["clothing_images"] = json.loads(
+            data.pop("clothing_json") or "[]"
+        )
+    except Exception:
+        data["clothing_images"] = []
+    try:
+        data["model_image"] = json.loads(
+            data.pop("model_json") or "{}"
+        )
+    except Exception:
+        data["model_image"] = {}
+    return data
+
+
+def batch_tryon_group_record(row):
+    data = dict(row)
+    try:
+        data["clothing_images"] = json.loads(
+            data.pop("clothing_json") or "[]"
+        )
+    except Exception:
+        data["clothing_images"] = []
+    try:
+        data["model_images"] = json.loads(
+            data.pop("model_json") or "[]"
+        )
+    except Exception:
+        data["model_images"] = []
+    data["collapsed"] = bool(data.get("collapsed"))
+    return data
+
+
+def list_batch_tryon_batches(limit=30):
+    limit = max(1, min(int(limit or 30), 100))
+    with BATCH_TRYON_LOCK:
+        conn = batch_tryon_connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM batch_tryon_batches
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [
+                batch_tryon_batch_record(
+                    row,
+                    batch_tryon_counts_for_conn(conn, row["id"]),
+                )
+                for row in rows
+            ]
+        finally:
+            conn.close()
+
+
+def get_batch_tryon_detail(batch_id):
+    with BATCH_TRYON_LOCK:
+        conn = batch_tryon_connect()
+        try:
+            batch = conn.execute(
+                "SELECT * FROM batch_tryon_batches WHERE id=?",
+                (batch_id,),
+            ).fetchone()
+            if not batch:
+                raise HTTPException(
+                    status_code=404,
+                    detail="批次不存在",
+                )
+            tasks = conn.execute(
+                """
+                SELECT *
+                FROM batch_tryon_tasks
+                WHERE batch_id=?
+                ORDER BY task_index ASC
+                """,
+                (batch_id,),
+            ).fetchall()
+            groups = conn.execute(
+                """
+                SELECT *
+                FROM batch_tryon_groups
+                WHERE batch_id=?
+                ORDER BY group_index ASC
+                """,
+                (batch_id,),
+            ).fetchall()
+            return {
+                "batch": batch_tryon_batch_record(
+                    batch,
+                    batch_tryon_counts_for_conn(conn, batch_id),
+                ),
+                "groups": [
+                    batch_tryon_group_record(row)
+                    for row in groups
+                ],
+                "tasks": [
+                    batch_tryon_task_record(row)
+                    for row in tasks
+                ],
+            }
+        finally:
+            conn.close()
+
+
+def create_batch_tryon_batch(payload: BatchTryonCreateRequest):
+    groups = normalize_batch_tryon_groups(payload)
+    mode = (payload.pairing_mode or "pair").strip()
+    prepared_tasks = []
+    for group in groups:
+        mode, pairs = build_batch_tryon_pairs(
+            group["clothing_images"],
+            group["model_images"],
+            mode,
+        )
+        for clothing_refs, model_ref in pairs:
+            prepared_tasks.append(
+                (group["source_key"], clothing_refs, model_ref)
+            )
+    if len(prepared_tasks) > 500:
+        raise HTTPException(
+            status_code=400,
+            detail="单个批次最多 500 个任务，请拆分后再生成",
+        )
+    model = selected_model(
+        payload.model,
+        BATCH_TRYON_DEFAULT_MODEL,
+    )
+    size = normalize_batch_tryon_size(payload.size)
+    batch_id = (
+        f"bt_{time.strftime('%Y%m%d')}_{uuid.uuid4().hex[:8]}"
+    )
+    now = time.time()
+    title = (
+        (payload.title or "Batch try-on").strip()[:120]
+        or "Batch try-on"
+    )
+    stored_group_ids = {}
+    for group in groups:
+        stored_group_ids[group["source_key"]] = (
+            f"btg_{batch_id[3:]}_{uuid.uuid4().hex[:6]}"
+        )
+
+    with BATCH_TRYON_LOCK:
+        conn = batch_tryon_connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO batch_tryon_batches(
+                    id, title, pairing_mode, prompt, model, size,
+                    quality, status, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                (
+                    batch_id,
+                    title,
+                    mode,
+                    payload.prompt.strip(),
+                    model,
+                    size,
+                    payload.quality,
+                    now,
+                    now,
+                ),
+            )
+            for group in groups:
+                conn.execute(
+                    """
+                    INSERT INTO batch_tryon_groups(
+                        id, batch_id, group_index, name,
+                        clothing_json, model_json, collapsed,
+                        created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+                    """,
+                    (
+                        stored_group_ids[group["source_key"]],
+                        batch_id,
+                        group["index"],
+                        group["name"],
+                        batch_tryon_json(
+                            group["clothing_images"]
+                        ),
+                        batch_tryon_json(
+                            group["model_images"]
+                        ),
+                        now,
+                        now,
+                    ),
+                )
+            for index, (
+                group_id,
+                clothing_refs,
+                model_ref,
+            ) in enumerate(prepared_tasks, start=1):
+                conn.execute(
+                    """
+                    INSERT INTO batch_tryon_tasks(
+                        id, batch_id, group_id, task_index,
+                        status, clothing_json, model_json,
+                        result_url, error_message, attempts,
+                        created_at, updated_at
+                    )
+                    VALUES (
+                        ?, ?, ?, ?, 'pending', ?, ?,
+                        NULL, NULL, 0, ?, ?
+                    )
+                    """,
+                    (
+                        f"btt_{uuid.uuid4().hex[:12]}",
+                        batch_id,
+                        stored_group_ids.get(group_id),
+                        index,
+                        batch_tryon_json(clothing_refs),
+                        batch_tryon_json(model_ref),
+                        now,
+                        now,
+                    ),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+    return batch_id
+
+
+def set_batch_tryon_batch_status(batch_id, status):
+    with BATCH_TRYON_LOCK:
+        conn = batch_tryon_connect()
+        try:
+            row = conn.execute(
+                """
+                SELECT id, status
+                FROM batch_tryon_batches
+                WHERE id=?
+                """,
+                (batch_id,),
+            ).fetchone()
+            if not row:
+                raise HTTPException(
+                    status_code=404,
+                    detail="批次不存在",
+                )
+            conn.execute(
+                """
+                UPDATE batch_tryon_batches
+                SET status=?, updated_at=?
+                WHERE id=?
+                """,
+                (status, time.time(), batch_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def prepare_batch_tryon_run(batch_id):
+    with BATCH_TRYON_LOCK:
+        conn = batch_tryon_connect()
+        try:
+            batch = conn.execute(
+                "SELECT * FROM batch_tryon_batches WHERE id=?",
+                (batch_id,),
+            ).fetchone()
+            if not batch:
+                raise HTTPException(
+                    status_code=404,
+                    detail="批次不存在",
+                )
+            counts = batch_tryon_counts_for_conn(conn, batch_id)
+            if counts["pending"] == 0:
+                final_status = (
+                    "failed"
+                    if counts["failed"] and not counts["completed"]
+                    else "completed"
+                )
+                conn.execute(
+                    """
+                    UPDATE batch_tryon_batches
+                    SET status=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (final_status, time.time(), batch_id),
+                )
+                conn.commit()
+                return False
+            conn.execute(
+                """
+                UPDATE batch_tryon_batches
+                SET status='running', updated_at=?
+                WHERE id=?
+                """,
+                (time.time(), batch_id),
+            )
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+
+
+def claim_next_batch_tryon_task(batch_id):
+    with BATCH_TRYON_LOCK:
+        conn = batch_tryon_connect()
+        try:
+            batch = conn.execute(
+                "SELECT * FROM batch_tryon_batches WHERE id=?",
+                (batch_id,),
+            ).fetchone()
+            if not batch or batch["status"] != "running":
+                return None, None
+            task = conn.execute(
+                """
+                SELECT *
+                FROM batch_tryon_tasks
+                WHERE batch_id=? AND status='pending'
+                ORDER BY task_index ASC
+                LIMIT 1
+                """,
+                (batch_id,),
+            ).fetchone()
+            if not task:
+                return dict(batch), None
+            now = time.time()
+            conn.execute(
+                """
+                UPDATE batch_tryon_tasks
+                SET status='running', attempts=attempts+1,
+                    started_at=?, updated_at=?, error_message=NULL
+                WHERE id=?
+                """,
+                (now, now, task["id"]),
+            )
+            conn.execute(
+                """
+                UPDATE batch_tryon_batches
+                SET updated_at=?
+                WHERE id=?
+                """,
+                (now, batch_id),
+            )
+            conn.commit()
+            task = conn.execute(
+                "SELECT * FROM batch_tryon_tasks WHERE id=?",
+                (task["id"],),
+            ).fetchone()
+            return dict(batch), batch_tryon_task_record(task)
+        finally:
+            conn.close()
+
+
+def complete_batch_tryon_task(task_id, result_url):
+    now = time.time()
+    with BATCH_TRYON_LOCK:
+        conn = batch_tryon_connect()
+        try:
+            conn.execute(
+                """
+                UPDATE batch_tryon_tasks
+                SET status='completed', result_url=?,
+                    error_message=NULL, completed_at=?, updated_at=?
+                WHERE id=?
+                """,
+                (result_url, now, now, task_id),
+            )
+            batch_id = conn.execute(
+                """
+                SELECT batch_id
+                FROM batch_tryon_tasks
+                WHERE id=?
+                """,
+                (task_id,),
+            ).fetchone()["batch_id"]
+            conn.execute(
+                """
+                UPDATE batch_tryon_batches
+                SET updated_at=?
+                WHERE id=?
+                """,
+                (now, batch_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def fail_batch_tryon_task(task_id, error_message):
+    now = time.time()
+    clean_error = str(error_message or "生成失败")[:1000]
+    with BATCH_TRYON_LOCK:
+        conn = batch_tryon_connect()
+        try:
+            conn.execute(
+                """
+                UPDATE batch_tryon_tasks
+                SET status='failed', error_message=?,
+                    completed_at=?, updated_at=?
+                WHERE id=?
+                """,
+                (clean_error, now, now, task_id),
+            )
+            row = conn.execute(
+                """
+                SELECT batch_id
+                FROM batch_tryon_tasks
+                WHERE id=?
+                """,
+                (task_id,),
+            ).fetchone()
+            if row:
+                conn.execute(
+                    """
+                    UPDATE batch_tryon_batches
+                    SET updated_at=?
+                    WHERE id=?
+                    """,
+                    (now, row["batch_id"]),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def finalize_batch_tryon_if_idle(batch_id):
+    with BATCH_TRYON_LOCK:
+        conn = batch_tryon_connect()
+        try:
+            batch = conn.execute(
+                """
+                SELECT status
+                FROM batch_tryon_batches
+                WHERE id=?
+                """,
+                (batch_id,),
+            ).fetchone()
+            if not batch:
+                return
+            counts = batch_tryon_counts_for_conn(conn, batch_id)
+            if (
+                batch["status"] == "running"
+                and counts["pending"] == 0
+                and counts["running"] == 0
+            ):
+                status = (
+                    "failed"
+                    if counts["failed"] and not counts["completed"]
+                    else "completed"
+                )
+                conn.execute(
+                    """
+                    UPDATE batch_tryon_batches
+                    SET status=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (status, time.time(), batch_id),
+                )
+                conn.commit()
+        finally:
+            conn.close()
+
+
+def reset_batch_tryon_failed_tasks(batch_id):
+    with BATCH_TRYON_LOCK:
+        conn = batch_tryon_connect()
+        try:
+            row = conn.execute(
+                """
+                SELECT id
+                FROM batch_tryon_batches
+                WHERE id=?
+                """,
+                (batch_id,),
+            ).fetchone()
+            if not row:
+                raise HTTPException(
+                    status_code=404,
+                    detail="批次不存在",
+                )
+            conn.execute(
+                """
+                UPDATE batch_tryon_tasks
+                SET status='pending', result_url=NULL,
+                    error_message=NULL, completed_at=NULL,
+                    updated_at=?
+                WHERE batch_id=? AND status='failed'
+                """,
+                (time.time(), batch_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def reset_batch_tryon_task(task_id):
+    with BATCH_TRYON_LOCK:
+        conn = batch_tryon_connect()
+        try:
+            row = conn.execute(
+                """
+                SELECT batch_id
+                FROM batch_tryon_tasks
+                WHERE id=?
+                """,
+                (task_id,),
+            ).fetchone()
+            if not row:
+                raise HTTPException(
+                    status_code=404,
+                    detail="任务不存在",
+                )
+            conn.execute(
+                """
+                UPDATE batch_tryon_tasks
+                SET status='pending', result_url=NULL,
+                    error_message=NULL, completed_at=NULL,
+                    updated_at=?
+                WHERE id=?
+                """,
+                (time.time(), task_id),
+            )
+            conn.commit()
+            return row["batch_id"]
+        finally:
+            conn.close()
+
+
+def batch_tryon_error_detail(exc):
+    if isinstance(exc, HTTPException):
+        return exc.detail
+    if isinstance(exc, httpx.TimeoutException):
+        return (
+            f"上游生图接口超时（{AI_REQUEST_TIMEOUT:g} 秒），"
+            "可能仍在排队或生成过慢"
+        )
+    if isinstance(exc, httpx.HTTPStatusError):
+        return (
+            f"上游接口错误 {exc.response.status_code}: "
+            f"{exc.response.text[:500]}"
+        )
+    if isinstance(exc, httpx.RequestError):
+        text = str(exc).strip()
+        return (
+            "请求上游生图接口失败："
+            f"{text or exc.__class__.__name__}"
+        )
+    return str(exc).strip() or exc.__class__.__name__
+
+
+def batch_tryon_api_headers(api_key):
+    clean_key = str(api_key or "").strip()
+    if not clean_key:
+        raise HTTPException(
+            status_code=400,
+            detail="未配置 COMFLY_API_KEY，请在 API/.env 中填写。",
+        )
+    return {
+        "Accept": "application/json",
+        "Authorization": bearer_auth_value(clean_key),
+    }
+
+
+async def batch_tryon_wait_for_image_task(
+    client,
+    task_id,
+    provider,
+    api_key,
+):
+    timeout = IMAGE_TASK_TIMEOUT
+    interval = IMAGE_POLL_INTERVAL
+    deadline = time.monotonic() + timeout
+    last_payload = {}
+    while time.monotonic() < deadline:
+        response = await client.get(
+            image_task_url_for_provider(provider, task_id),
+            headers=batch_tryon_api_headers(api_key),
+        )
+        response.raise_for_status()
+        last_payload = response.json()
+        status = image_task_status(last_payload)
+        if not status:
+            try:
+                if extract_image(last_payload):
+                    return last_payload
+            except HTTPException:
+                pass
+        if status in IMAGE_TASK_SUCCESS_STATUSES:
+            return last_payload
+        if status in IMAGE_TASK_FAILED_STATUSES:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "生图任务失败："
+                    f"{image_task_fail_reason(last_payload)}"
+                ),
+            )
+        await asyncio.sleep(
+            min(interval, max(0.0, deadline - time.monotonic()))
+        )
+    raw_text = (
+        json.dumps(last_payload, ensure_ascii=False)[:800]
+        if last_payload
+        else ""
+    )
+    extra = f"，最后响应：{raw_text}" if raw_text else ""
+    raise HTTPException(
+        status_code=504,
+        detail=(
+            f"生图任务超时（已等待 {int(timeout)} 秒），"
+            f"task_id={task_id}{extra}"
+        ),
+    )
+
+
+async def generate_batch_tryon_image(
+    prompt,
+    size,
+    quality,
+    model,
+    reference_images,
+    api_key="",
+    base_url="",
+    extra_fields=None,
+):
+    aspect_ratio = str(
+        (extra_fields or {}).get("aspect_ratio") or ""
+    )
+    if not api_key and not base_url and not extra_fields:
+        return await generate_ai_image(
+            prompt,
+            size,
+            quality,
+            model,
+            reference_images,
+            provider_id="comfly",
+            aspect_ratio=aspect_ratio,
+        )
+
+    provider = dict(get_api_provider("comfly"))
+    if base_url:
+        provider["base_url"] = str(base_url).strip().rstrip("/")
+    clean_key = (
+        str(api_key or "").strip()
+        or provider_env_key_value(provider["id"])
+    )
+    headers = batch_tryon_api_headers(clean_key)
+    refs = [
+        ref
+        for ref in (reference_images or [])
+        if ref.get("url")
+    ]
+    gen_url = provider_endpoint_url(
+        provider,
+        "image_generation_endpoint",
+        "/v1/images/generations",
+    )
+    edit_url = provider_endpoint_url(
+        provider,
+        "image_edit_endpoint",
+        "/v1/images/edits",
+    )
+    request_fields = {
+        "model": model,
+        "prompt": prompt,
+        "response_format": "url",
+        "n": "1",
+    }
+    if size:
+        request_fields["size"] = size
+    if quality:
+        request_fields["quality"] = quality
+    for key, value in (extra_fields or {}).items():
+        if value not in (None, ""):
+            request_fields[key] = str(value)
+
+    request_timeout = httpx.Timeout(
+        connect=20.0,
+        read=1800.0,
+        write=120.0,
+        pool=20.0,
+    )
+    async with httpx.AsyncClient(timeout=request_timeout) as client:
+        response = None
+        if effective_image_request_mode(provider, model) == "openai-json":
+            extra_body = {"response_format": "url"}
+            if refs:
+                extra_body["image"] = [
+                    reference_to_data_url(ref, max_size=1536)
+                    for ref in refs[:16]
+                ]
+            body = {
+                "model": model,
+                "prompt": prompt,
+                "size": size,
+                "extra_body": extra_body,
+            }
+            response = await client.post(
+                gen_url,
+                headers={**headers, "Content-Type": "application/json"},
+                json=body,
+            )
+        elif refs:
+            files = []
+            opened = []
+            edit_failed = None
+            try:
+                for ref in refs[:4]:
+                    path = output_file_from_url(ref.get("url", ""))
+                    if not path:
+                        continue
+                    fh = open(path, "rb")
+                    opened.append(fh)
+                    files.append((
+                        "image",
+                        (
+                            os.path.basename(path),
+                            fh,
+                            content_type_for_path(path),
+                        ),
+                    ))
+                response = await client.post(
+                    edit_url,
+                    headers=headers,
+                    data=request_fields,
+                    files=files,
+                )
+                if response.status_code >= 400:
+                    edit_failed = (
+                        f"{response.status_code}: "
+                        f"{response.text[:500]}"
+                    )
+                    response = None
+            finally:
+                for fh in opened:
+                    fh.close()
+            if response is None:
+                print(
+                    "/images/edits failed "
+                    f"({edit_failed}) → 回退到 "
+                    "/images/generations + image JSON"
+                )
+                body = {
+                    **request_fields,
+                    "n": 1,
+                    "image": [
+                        reference_to_data_url(ref, max_size=1536)
+                        for ref in refs[:4]
+                    ],
+                }
+                response = await client.post(
+                    gen_url,
+                    headers={
+                        **headers,
+                        "Content-Type": "application/json",
+                    },
+                    json=body,
+                )
+        else:
+            response = await client.post(
+                gen_url,
+                headers={
+                    **headers,
+                    "Content-Type": "application/json",
+                },
+                json={**request_fields, "n": 1},
+            )
+        response.raise_for_status()
+        raw = response.json()
+        try:
+            return extract_image(raw), raw
+        except HTTPException:
+            task_id = extract_task_id(raw)
+            if not task_id:
+                raise
+        task_result = await batch_tryon_wait_for_image_task(
+            client,
+            task_id,
+            provider,
+            clean_key,
+        )
+        return extract_image(task_result), task_result
+
+
+async def run_batch_tryon_worker(
+    batch_id,
+    api_key="",
+    base_url="",
+):
+    try:
+        while True:
+            batch, task = claim_next_batch_tryon_task(batch_id)
+            if not task:
+                finalize_batch_tryon_if_idle(batch_id)
+                return
+
+            refs = [
+                *task.get("clothing_images", []),
+                task.get("model_image", {}),
+            ]
+            try:
+                request_size, extra_fields = (
+                    batch_tryon_generation_fields(
+                        batch.get("size")
+                    )
+                )
+                image_data, raw = await generate_batch_tryon_image(
+                    batch.get("prompt") or "",
+                    request_size,
+                    batch.get("quality") or "auto",
+                    selected_model(
+                        batch.get("model"),
+                        BATCH_TRYON_DEFAULT_MODEL,
+                    ),
+                    refs,
+                    api_key=api_key,
+                    base_url=base_url,
+                    extra_fields=extra_fields,
+                )
+                local_url = await save_ai_image_to_output(
+                    image_data,
+                    prefix="batch_tryon_",
+                )
+                complete_batch_tryon_task(task["id"], local_url)
+                record = {
+                    "prompt": batch.get("prompt") or "",
+                    "images": [local_url],
+                    "timestamp": time.time(),
+                    "type": "batch_tryon",
+                    "model": batch.get("model"),
+                    "status": TASK_SUCCEEDED,
+                    "params": {
+                        "batch_id": batch_id,
+                        "group_id": task.get("group_id"),
+                        "task_id": task["id"],
+                        "pairing_mode": batch.get(
+                            "pairing_mode"
+                        ),
+                        "clothing_images": task.get(
+                            "clothing_images",
+                            [],
+                        ),
+                        "model_image": task.get(
+                            "model_image",
+                            {},
+                        ),
+                    },
+                    "raw_usage": (
+                        raw.get("usage")
+                        if isinstance(raw, dict)
+                        else None
+                    ),
+                }
+                save_to_history(record)
+                await manager.broadcast_new_image(record)
+            except Exception as exc:
+                fail_batch_tryon_task(
+                    task["id"],
+                    batch_tryon_error_detail(exc),
+                )
+            finally:
+                finalize_batch_tryon_if_idle(batch_id)
+    finally:
+        current = BATCH_TRYON_WORKERS.get(batch_id)
+        if current is asyncio.current_task():
+            BATCH_TRYON_WORKERS.pop(batch_id, None)
+
+
+def start_batch_tryon_worker(
+    batch_id,
+    api_key="",
+    base_url="",
+):
+    current = BATCH_TRYON_WORKERS.get(batch_id)
+    if current and not current.done():
+        return
+    BATCH_TRYON_WORKERS[batch_id] = asyncio.create_task(
+        run_batch_tryon_worker(
+            batch_id,
+            api_key=api_key,
+            base_url=base_url,
+        )
+    )
+
+
+def validate_batch_tryon_worker_access(api_key=""):
+    if str(api_key or "").strip():
+        return
+    provider = get_api_provider("comfly")
+    api_headers(
+        json_body=False,
+        provider=provider,
+        model=BATCH_TRYON_DEFAULT_MODEL,
+    )
+
+
+@app.on_event("startup")
+async def startup_batch_tryon():
+    init_batch_tryon_db()
+    recover_batch_tryon_state()
+
+
+@app.get("/api/batch-tryon/batches")
+async def batch_tryon_batches(limit: int = 30):
+    init_batch_tryon_db()
+    return {"batches": list_batch_tryon_batches(limit)}
+
+
+@app.post("/api/batch-tryon/batches")
+async def batch_tryon_create_batch(
+    payload: BatchTryonCreateRequest,
+    x_comfly_api_key: str = Header(default=""),
+    x_comfly_base_url: str = Header(default=""),
+):
+    init_batch_tryon_db()
+    if payload.autostart:
+        validate_batch_tryon_worker_access(x_comfly_api_key)
+    batch_id = create_batch_tryon_batch(payload)
+    if (
+        payload.autostart
+        and prepare_batch_tryon_run(batch_id)
+    ):
+        start_batch_tryon_worker(
+            batch_id,
+            api_key=x_comfly_api_key,
+            base_url=x_comfly_base_url,
+        )
+    return get_batch_tryon_detail(batch_id)
+
+
+@app.get("/api/batch-tryon/batches/{batch_id}")
+async def batch_tryon_get_batch(batch_id: str):
+    init_batch_tryon_db()
+    return get_batch_tryon_detail(batch_id)
+
+
+@app.post("/api/batch-tryon/batches/{batch_id}/start")
+async def batch_tryon_start_batch(
+    batch_id: str,
+    payload: BatchTryonControlRequest,
+    x_comfly_api_key: str = Header(default=""),
+    x_comfly_base_url: str = Header(default=""),
+):
+    init_batch_tryon_db()
+    validate_batch_tryon_worker_access(x_comfly_api_key)
+    if prepare_batch_tryon_run(batch_id):
+        start_batch_tryon_worker(
+            batch_id,
+            api_key=x_comfly_api_key,
+            base_url=x_comfly_base_url,
+        )
+    return get_batch_tryon_detail(batch_id)
+
+
+@app.post("/api/batch-tryon/batches/{batch_id}/pause")
+async def batch_tryon_pause_batch(batch_id: str):
+    init_batch_tryon_db()
+    set_batch_tryon_batch_status(batch_id, "paused")
+    return get_batch_tryon_detail(batch_id)
+
+
+@app.post("/api/batch-tryon/batches/{batch_id}/resume")
+async def batch_tryon_resume_batch(
+    batch_id: str,
+    payload: BatchTryonControlRequest,
+    x_comfly_api_key: str = Header(default=""),
+    x_comfly_base_url: str = Header(default=""),
+):
+    init_batch_tryon_db()
+    validate_batch_tryon_worker_access(x_comfly_api_key)
+    if prepare_batch_tryon_run(batch_id):
+        start_batch_tryon_worker(
+            batch_id,
+            api_key=x_comfly_api_key,
+            base_url=x_comfly_base_url,
+        )
+    return get_batch_tryon_detail(batch_id)
+
+
+@app.post("/api/batch-tryon/batches/{batch_id}/retry-failed")
+async def batch_tryon_retry_failed(
+    batch_id: str,
+    payload: BatchTryonControlRequest,
+    x_comfly_api_key: str = Header(default=""),
+    x_comfly_base_url: str = Header(default=""),
+):
+    init_batch_tryon_db()
+    validate_batch_tryon_worker_access(x_comfly_api_key)
+    reset_batch_tryon_failed_tasks(batch_id)
+    if prepare_batch_tryon_run(batch_id):
+        start_batch_tryon_worker(
+            batch_id,
+            api_key=x_comfly_api_key,
+            base_url=x_comfly_base_url,
+        )
+    return get_batch_tryon_detail(batch_id)
+
+
+@app.post("/api/batch-tryon/tasks/{task_id}/retry")
+async def batch_tryon_retry_task(
+    task_id: str,
+    payload: BatchTryonControlRequest,
+    x_comfly_api_key: str = Header(default=""),
+    x_comfly_base_url: str = Header(default=""),
+):
+    init_batch_tryon_db()
+    validate_batch_tryon_worker_access(x_comfly_api_key)
+    batch_id = reset_batch_tryon_task(task_id)
+    if prepare_batch_tryon_run(batch_id):
+        start_batch_tryon_worker(
+            batch_id,
+            api_key=x_comfly_api_key,
+            base_url=x_comfly_base_url,
+        )
+    return get_batch_tryon_detail(batch_id)
+
+
+# --- End QCOS Batch try-on 批量试穿 ---
 
 # --- QCOS Gallery 资产库 ---
 

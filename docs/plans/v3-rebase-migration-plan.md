@@ -117,7 +117,9 @@
 - `POST /api/batch-tryon/batches`（合法最小 payload，字段从参照源 Pydantic 模型照抄）→ 成功响应含 batch_id
 - `POST /api/batch-tryon/batches/nonexistent/start` → 参照源定义的错误状态码
 
-- [ ] **Step 1–5：同 Task 2 节奏**
+- [x] **Step 1–5：同 Task 2 节奏**
+
+> 进展（2026-07-30）：已移植 batch-tryon 请求模型、SQLite schema/恢复逻辑、批次状态机、异步 worker 与 8 条控制路由，并适配上游 provider 生图接口；新增空列表、批次创建及 start 404 契约测试。`main.py` 编译通过，batch-tryon 和 canvas log cleanup focused 测试共 17 项通过，并随本任务提交。
 
 ### Task 5: flatlay 模块
 
