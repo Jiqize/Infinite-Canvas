@@ -19,6 +19,10 @@
 3. **支撑模块**：`app_config.py`、`task_status.py`（上游没有这两个文件；若上游 main.py 已内联等价逻辑，以适配上游为准，不强行引入）
 4. **QCOS 文档**：`docs/quiet-creative-os*`（原样拷贝，不改内容）
 
+### 补充修正（2026-07-30 收尾验证时发现）
+
+"保留资产"清单漏列了 batch-tryon / flatlay 的 UI 载体——它们是 design/v2.1 的静态页而非 React 路由。验收标准 3 明确要求页面可打开，故迁入 `static/batch-tryon.html`、`static/flatlay.html` 及其依赖（`design-system.css`、`icons/pixel.svg`、`logo.svg`、根级 `theme.js`/`i18n.js`/`image-preview.js`/`history-bulk-manager.js`）。已核实与上游文件零撞名（上游同名文件在 `static/js/` 子目录）。这些依赖资源因是功能页的运行时依赖而迁入，不代表恢复 re-skin 范围。
+
 ## 明确放弃（Out of Scope）
 
 - design v2.1 对 static 单文件页面的 Mistral 风格 re-skin（Phase 0–4 的全部 static/ 改动）
