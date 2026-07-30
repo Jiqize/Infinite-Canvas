@@ -161,11 +161,13 @@
 - `GET /app/canvas/some-id` → 200，返回 index.html（SPA 回落）
 - `GET /app/assets/不存在的文件.js` → 参照源定义的行为
 
-- [ ] **Step 1: `npm install && npm run build`，记录真实输出**
-- [ ] **Step 2: 写失败测试 → 确认失败**
-- [ ] **Step 3: 移植 SPA 路由 + 逐端点契约核对并落表**
-- [ ] **Step 4: 全部测试 + py_compile 通过**
-- [ ] **Step 5: Commit**
+- [x] **Step 1: `npm install && npm run build`，记录真实输出**
+- [x] **Step 2: 写失败测试 → 确认失败**
+- [x] **Step 3: 移植 SPA 路由 + 逐端点契约核对并落表**
+- [x] **Step 4: 全部测试 + py_compile 通过**
+- [x] **Step 5: Commit**
+
+> 进展（2026-07-30）：已移植 `/app` SPA fallback、`/app/assets` 静态挂载与 `/legacy` 重定向，完成 51 个固定前端端点的契约核对并适配上游 provider/queue/canvas-video/canvas-assets 差异；前端构建、`main.py` 编译与全量 32 项测试均通过。
 
 ## 自查记录
 

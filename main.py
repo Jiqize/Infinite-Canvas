@@ -19756,6 +19756,59 @@ async def qcos_flatlay_startup():
 # --- End QCOS Flatlay 模特图转平面图 ---
 
 
+# --- QCOS React SPA ---
+
+from fastapi.responses import RedirectResponse
+
+
+FRONTEND_BUILD_DIR = os.path.join(STATIC_DIR, "app")
+FRONTEND_ASSETS_DIR = os.path.join(FRONTEND_BUILD_DIR, "assets")
+FRONTEND_INDEX_FILE = os.path.join(FRONTEND_BUILD_DIR, "index.html")
+
+if os.path.isdir(FRONTEND_ASSETS_DIR):
+    app.mount(
+        "/app/assets",
+        StaticFiles(directory=FRONTEND_ASSETS_DIR),
+        name="app-assets",
+    )
+
+
+def frontend_index_response():
+    if not os.path.exists(FRONTEND_INDEX_FILE):
+        return Response(
+            "<!doctype html><html><head><title>Feebee Studios</title></head>"
+            "<body><h1>Frontend build missing</h1>"
+            "<p>Run <code>npm --prefix frontend run build</code> to generate the Quiet Creative OS shell.</p>"
+            "</body></html>",
+            status_code=503,
+            media_type="text/html",
+            headers={"Cache-Control": "no-store"},
+        )
+    return FileResponse(
+        FRONTEND_INDEX_FILE,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/app")
+async def app_index():
+    return frontend_index_response()
+
+
+@app.get("/app/{path:path}")
+async def app_fallback(path: str):
+    return frontend_index_response()
+
+
+@app.get("/legacy")
+@app.get("/legacy/")
+async def legacy_index():
+    return RedirectResponse(url="/app", status_code=302)
+
+
+# --- End QCOS React SPA ---
+
+
 if __name__ == "__main__":
     import uvicorn
     # 关闭服务端协议级 WebSocket ping：部分客户端（如 PS UXP 面板）不会自动回 pong，

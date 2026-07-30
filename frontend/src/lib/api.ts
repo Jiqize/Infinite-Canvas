@@ -67,6 +67,10 @@ export interface ProviderModelsResponse {
   chat_models?: string[];
   video_models?: string[];
   raw_count?: number;
+  total?: number;
+  model_count?: number;
+  all?: string[];
+  message?: string;
 }
 
 export interface ProviderProbeResponse {
@@ -74,6 +78,7 @@ export interface ProviderProbeResponse {
   status_code?: number;
   protocol?: string;
   detail?: string;
+  message?: string;
 }
 
 export interface ComfyInstancesResponse {
@@ -629,6 +634,19 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   return response.json() as Promise<T>;
 }
 
+function normalizeProviderModels(response: ProviderModelsResponse): ProviderModelsResponse {
+  const models = response.models || response.all || Array.from(new Set([
+    ...(response.image_models || []),
+    ...(response.chat_models || []),
+    ...(response.video_models || [])
+  ]));
+  return {
+    ...response,
+    models,
+    raw_count: response.raw_count ?? response.model_count ?? response.total ?? models.length
+  };
+}
+
 function userJsonHeaders(userId: string): HeadersInit {
   return {
     "Content-Type": "application/json",
@@ -659,7 +677,7 @@ export function testProviderConnection(payload: ProviderConnectionPayload, signa
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
     signal
-  });
+  }).then(normalizeProviderModels);
 }
 
 export function fetchProviderModels(payload: ProviderConnectionPayload, signal?: AbortSignal): Promise<ProviderModelsResponse> {
@@ -668,7 +686,7 @@ export function fetchProviderModels(payload: ProviderConnectionPayload, signal?:
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
     signal
-  });
+  }).then(normalizeProviderModels);
 }
 
 export function probeProviderAsync(payload: ProviderConnectionPayload, signal?: AbortSignal): Promise<ProviderProbeResponse> {
@@ -677,7 +695,10 @@ export function probeProviderAsync(payload: ProviderConnectionPayload, signal?: 
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
     signal
-  });
+  }).then((response) => ({
+    ...response,
+    detail: response.detail || response.message
+  }));
 }
 
 export function encodeWorkflowName(name: string): string {
@@ -744,7 +765,11 @@ export function runComfyWorkflow(name: string, payload: ComfyWorkflowRunPayload,
 }
 
 export function getQueueStatus(clientId: string, signal?: AbortSignal): Promise<QueueStatus> {
-  return apiFetch<QueueStatus>(`/api/queue_status?client_id=${encodeURIComponent(clientId)}`, { signal });
+  return apiFetch<QueueStatus>(`/api/queue_status?client_id=${encodeURIComponent(clientId)}`, { signal })
+    .then((response) => ({
+      ...response,
+      status: response.status || (response.position ? "queued" : response.total ? "running" : "succeeded")
+    }));
 }
 
 export function getRecentAssets(signal?: AbortSignal): Promise<GalleryResponse> {
@@ -986,10 +1011,14 @@ export function runCanvasLLM(payload: CanvasLLMPayload, signal?: AbortSignal): P
 }
 
 export function runCanvasVideo(payload: CanvasVideoPayload, signal?: AbortSignal): Promise<CanvasVideoResponse> {
+  const { camera_fixed: cameraFixed, ...upstreamPayload } = payload;
   return apiFetch<CanvasVideoResponse>("/api/canvas-video", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      ...upstreamPayload,
+      camerafixed: upstreamPayload.camerafixed ?? cameraFixed ?? false
+    }),
     signal
   });
 }
