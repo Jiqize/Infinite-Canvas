@@ -36,11 +36,13 @@
 - `import app_config` → 成功，design/v2.1 main.py 第 32 行 import 的每个符号存在
 - `import task_status` → 成功，第 72 行 import 的每个符号存在
 
-- [ ] **Step 1: 写失败测试**（模块不存在 → ModuleNotFoundError）
-- [ ] **Step 2: `python3 -m pytest tests/test_v3_support_modules.py -q` 确认失败**
-- [ ] **Step 3: 落盘两个模块文件**
-- [ ] **Step 4: 测试通过 + `python3 -m py_compile app_config.py task_status.py main.py` 通过**
-- [ ] **Step 5: Commit**
+- [x] **Step 1: 写失败测试**（模块不存在 → ModuleNotFoundError）
+- [x] **Step 2: `python3 -m pytest tests/test_v3_support_modules.py -q` 确认失败**
+- [x] **Step 3: 落盘两个模块文件**
+- [x] **Step 4: 测试通过 + `python3 -m py_compile app_config.py task_status.py main.py` 通过**
+- [x] **Step 5: Commit**
+
+> 进展（2026-07-30）：已原样移植两个支撑模块，新增导入契约测试；`app_config` 导入时只读 `API/.env` 的既有副作用保持不变。支撑模块与 `main.py` 编译通过，支撑模块和 canvas log cleanup focused 测试共 16 项通过，并随本任务提交。
 
 ### Task 2: gallery 资产库模块
 
