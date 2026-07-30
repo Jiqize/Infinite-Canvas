@@ -93,7 +93,9 @@
 - `POST /api/canvas-video-tasks`（合法最小 payload，从参照源 Pydantic 模型读取必填字段）→ 参照源定义的成功响应（含 task_id）
 - `GET /api/canvas-video-tasks/nonexistent` → 参照源定义的错误状态码
 
-- [ ] **Step 1–5：同 Task 2 节奏（失败测试 → 移植 → 全部验证 → commit）**
+- [x] **Step 1–5：同 Task 2 节奏（失败测试 → 移植 → 全部验证 → commit）**
+
+> 进展（2026-07-30）：已适配上游 `CanvasVideoRequest`、`canvas_video` 与即梦 pending 查询能力，移植 POST/GET 两条异步任务路由并保留 queued/running/succeeded/failed/timeout 状态契约；新增创建、成功回查及 404 测试。`main.py` 编译通过，canvas-video-tasks 和 canvas log cleanup focused 测试共 17 项通过，并随本任务提交。
 
 ### Task 4: batch-tryon 批量试穿模块
 

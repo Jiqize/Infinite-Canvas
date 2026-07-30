@@ -18261,6 +18261,350 @@ def run_workflow(name: str, payload: WorkflowRunRequest):
     )
     return generate(req)
 
+# --- QCOS Canvas 视频任务队列 ---
+
+from task_status import TASK_FAILED, TASK_QUEUED, TASK_RUNNING, TASK_SUCCEEDED, TASK_TIMEOUT
+
+
+class QCOSCanvasVideoTaskRequest(CanvasVideoRequest):
+    prompt: str = Field(min_length=1, max_length=4000)
+    camera_fixed: bool = False
+
+
+def qcos_canvas_payload_dict(payload):
+    if hasattr(payload, "model_dump"):
+        return payload.model_dump()
+    return payload.dict()
+
+
+def qcos_jimeng_text_status(value):
+    text = str(value or "").strip().lower()
+    if text in {"success", "succeeded", "done", "complete", "completed", "finish", "finished"}:
+        return TASK_SUCCEEDED
+    if text in {"querying", "running", "processing", "pending", "queued", "wait", "waiting"}:
+        return TASK_RUNNING
+    if text in {"fail", "failed", "error", "canceled", "cancelled", "timeout"}:
+        return TASK_FAILED
+    return ""
+
+
+def qcos_jimeng_generation_status(raw):
+    if isinstance(raw, dict):
+        for key in ("gen_status", "genStatus", "status", "task_status", "taskStatus"):
+            status = qcos_jimeng_text_status(raw.get(key))
+            if status:
+                return status
+        for key in ("data", "result", "task"):
+            status = qcos_jimeng_generation_status(raw.get(key))
+            if status:
+                return status
+    if isinstance(raw, list):
+        for item in raw:
+            status = qcos_jimeng_generation_status(item)
+            if status:
+                return status
+    return ""
+
+
+def qcos_jimeng_walk_dicts(raw):
+    if isinstance(raw, dict):
+        yield raw
+        for value in raw.values():
+            yield from qcos_jimeng_walk_dicts(value)
+    elif isinstance(raw, list):
+        for item in raw:
+            yield from qcos_jimeng_walk_dicts(item)
+
+
+def qcos_jimeng_first_value(raw, keys):
+    for item in qcos_jimeng_walk_dicts(raw):
+        for key in keys:
+            if key in item and item.get(key) is not None:
+                return item.get(key)
+    return None
+
+
+def qcos_jimeng_progress_info(raw, submit_id="", status=""):
+    queue_info = qcos_jimeng_first_value(raw, ("queue_info", "queueInfo", "queue"))
+    if not isinstance(queue_info, dict):
+        queue_info = {}
+    commerce_info = qcos_jimeng_first_value(raw, ("commerce_info", "commerceInfo"))
+    if not isinstance(commerce_info, dict):
+        commerce_info = {}
+    credit_count = qcos_jimeng_first_value(raw, ("credit_count", "creditCount"))
+    if credit_count is None:
+        if "credit_count" in commerce_info:
+            credit_count = commerce_info.get("credit_count")
+        elif "creditCount" in commerce_info:
+            credit_count = commerce_info.get("creditCount")
+    gen_status = str(
+        qcos_jimeng_first_value(
+            raw,
+            ("gen_status", "genStatus", "task_status", "taskStatus", "status"),
+        )
+        or ""
+    ).strip()
+    clean_submit = str(submit_id or jimeng_submit_id(raw) or "").strip()
+    progress = {
+        "provider": "jimeng",
+        "status": status or qcos_jimeng_generation_status(raw) or TASK_RUNNING,
+        "submit_id": clean_submit,
+        "gen_status": gen_status,
+        "queue_status": str(
+            queue_info.get("queue_status") or queue_info.get("queueStatus") or ""
+        ).strip(),
+        "queue_idx": queue_info.get("queue_idx", queue_info.get("queueIdx")),
+        "queue_length": queue_info.get("queue_length", queue_info.get("queueLength")),
+        "priority": queue_info.get("priority"),
+        "credit_count": credit_count,
+    }
+    return {key: value for key, value in progress.items() if value not in ("", None)}
+
+
+async def run_canvas_video_task(
+    task_id: str,
+    payload: QCOSCanvasVideoTaskRequest,
+    api_key: str = "",
+    base_url: str = "",
+):
+    with CANVAS_TASK_LOCK:
+        if task_id in CANVAS_TASKS:
+            CANVAS_TASKS[task_id]["status"] = TASK_RUNNING
+            CANVAS_TASKS[task_id]["updated_at"] = time.time()
+    try:
+        if payload.camera_fixed:
+            payload.camerafixed = True
+        result = await canvas_video(payload)
+        with CANVAS_TASK_LOCK:
+            CANVAS_TASKS[task_id].update({
+                "status": TASK_SUCCEEDED,
+                "result": result,
+                "error": "",
+                "updated_at": time.time(),
+            })
+    except JimengPendingError as exc:
+        with CANVAS_TASK_LOCK:
+            CANVAS_TASKS[task_id].update({
+                "status": TASK_RUNNING,
+                "submit_id": exc.submit_id,
+                "pending": jimeng_pending_payload(exc),
+                "raw": exc.raw,
+                "progress": qcos_jimeng_progress_info(
+                    exc.raw,
+                    exc.submit_id,
+                    TASK_RUNNING,
+                ),
+                "error": "",
+                "status_code": 202,
+                "updated_at": time.time(),
+            })
+    except Exception as exc:
+        detail = getattr(exc, "detail", None) or str(exc)
+        status_code = getattr(exc, "status_code", 500)
+        task_status = (
+            TASK_TIMEOUT
+            if status_code == 504
+            or "timeout" in str(detail).lower()
+            or "超时" in str(detail)
+            else TASK_FAILED
+        )
+        with CANVAS_TASK_LOCK:
+            CANVAS_TASKS[task_id].update({
+                "status": task_status,
+                "error": str(detail),
+                "status_code": status_code,
+                "updated_at": time.time(),
+            })
+
+
+@app.post("/api/canvas-video-tasks")
+async def create_canvas_video_task(
+    payload: QCOSCanvasVideoTaskRequest,
+    x_comfly_api_key: str = Header(default=""),
+    x_comfly_base_url: str = Header(default=""),
+):
+    task_id = f"canvas_vid_{uuid.uuid4().hex}"
+    payload_data = qcos_canvas_payload_dict(payload)
+    initial_progress = (
+        {"provider": "jimeng", "status": TASK_QUEUED}
+        if str(payload.provider_id or "").strip().lower() == "jimeng"
+        else {}
+    )
+    with CANVAS_TASK_LOCK:
+        CANVAS_TASKS[task_id] = {
+            "id": task_id,
+            "type": "canvas-video",
+            "status": TASK_QUEUED,
+            "created_at": time.time(),
+            "updated_at": time.time(),
+            "provider_id": payload.provider_id,
+            "payload": payload_data,
+            "result": None,
+            "progress": initial_progress,
+            "error": "",
+        }
+    asyncio.create_task(
+        run_canvas_video_task(
+            task_id,
+            payload,
+            api_key=x_comfly_api_key,
+            base_url=x_comfly_base_url,
+        )
+    )
+    return {"task_id": task_id, "status": TASK_QUEUED}
+
+
+async def maybe_refresh_canvas_video_task(
+    task_id: str,
+    task: Dict[str, Any],
+) -> Dict[str, Any]:
+    if (
+        task.get("type") != "canvas-video"
+        or task.get("status") != TASK_RUNNING
+        or not task.get("submit_id")
+    ):
+        return task
+    payload_data = task.get("payload") or {}
+    provider_id = payload_data.get("provider_id") or task.get("provider_id") or "jimeng"
+    provider = get_api_provider(provider_id)
+    if not is_jimeng_provider(provider):
+        return task
+    now = time.time()
+    query_interval = max(3.0, min(15.0, jimeng_poll_seconds() / 60))
+    with CANVAS_TASK_LOCK:
+        current = CANVAS_TASKS.get(task_id)
+        if not current:
+            return task
+        last_query_at = float(current.get("last_query_at") or 0)
+        if last_query_at and now - last_query_at < query_interval:
+            return dict(current)
+        current["last_query_at"] = now
+        task = dict(current)
+    try:
+        raw = await jimeng_query_result(task.get("submit_id"), kind="video")
+        try:
+            urls = await jimeng_store_outputs(raw, kind="video", allow_query=False)
+        except JimengPendingError as exc:
+            progress = qcos_jimeng_progress_info(
+                exc.raw,
+                exc.submit_id or task.get("submit_id"),
+                TASK_RUNNING,
+            )
+            pending = {
+                "status": TASK_RUNNING,
+                "urls": [],
+                "submit_id": exc.submit_id or task.get("submit_id"),
+                "raw": exc.raw,
+                "progress": progress,
+            }
+            with CANVAS_TASK_LOCK:
+                current = CANVAS_TASKS.get(task_id)
+                if current and current.get("status") == TASK_RUNNING:
+                    current["pending"] = pending
+                    current["raw"] = exc.raw
+                    current["progress"] = progress
+                    current["status_code"] = 202
+                    current["updated_at"] = time.time()
+                    return dict(current)
+            return task
+        submit_id = jimeng_submit_id(raw) or task.get("submit_id")
+        progress = qcos_jimeng_progress_info(raw, submit_id, TASK_SUCCEEDED)
+        result = {
+            "videos": urls,
+            "task_id": submit_id,
+            "raw": raw,
+            "progress": progress,
+        }
+        model = selected_model(
+            payload_data.get("model"),
+            (provider.get("video_models") or JIMENG_DEFAULT_VIDEO_MODELS)[0],
+        )
+        reference_images = [
+            ref
+            for ref in payload_data.get("images") or []
+            if isinstance(ref, dict) and ref.get("url")
+        ]
+        record = {
+            "prompt": payload_data.get("prompt") or "",
+            "images": urls,
+            "videos": urls,
+            "timestamp": time.time(),
+            "type": "video",
+            "model": model,
+            "provider_id": provider["id"],
+            "status": TASK_SUCCEEDED,
+            "params": {
+                "provider_id": provider["id"],
+                "model": model,
+                "duration": payload_data.get("duration"),
+                "aspect_ratio": payload_data.get("aspect_ratio"),
+                "resolution": payload_data.get("resolution"),
+                "reference_images": reference_images,
+                "videos": payload_data.get("videos") or [],
+                "audios": payload_data.get("audios") or [],
+                "multimodal": payload_data.get("multimodal"),
+                "submit_id": submit_id,
+            },
+        }
+        should_save = False
+        with CANVAS_TASK_LOCK:
+            current = CANVAS_TASKS.get(task_id)
+            if current and current.get("status") == TASK_RUNNING:
+                current.update({
+                    "status": TASK_SUCCEEDED,
+                    "result": result,
+                    "progress": progress,
+                    "error": "",
+                    "raw": raw,
+                    "status_code": 200,
+                    "updated_at": time.time(),
+                })
+                task = dict(current)
+                should_save = True
+            elif current:
+                task = dict(current)
+        if should_save:
+            save_to_history(record)
+            if GLOBAL_LOOP:
+                asyncio.run_coroutine_threadsafe(
+                    manager.broadcast_new_image(record),
+                    GLOBAL_LOOP,
+                )
+        return task
+    except Exception as exc:
+        detail = getattr(exc, "detail", None) or str(exc)
+        status_code = getattr(exc, "status_code", 500)
+        task_status = (
+            TASK_TIMEOUT
+            if status_code == 504
+            or "timeout" in str(detail).lower()
+            or "超时" in str(detail)
+            else TASK_FAILED
+        )
+        with CANVAS_TASK_LOCK:
+            current = CANVAS_TASKS.get(task_id)
+            if current:
+                current.update({
+                    "status": task_status,
+                    "error": str(detail),
+                    "status_code": status_code,
+                    "updated_at": time.time(),
+                })
+                return dict(current)
+        raise
+
+
+@app.get("/api/canvas-video-tasks/{task_id}")
+async def get_canvas_video_task(task_id: str):
+    with CANVAS_TASK_LOCK:
+        task = dict(CANVAS_TASKS.get(task_id) or {})
+    if not task:
+        raise HTTPException(
+            status_code=404,
+            detail="画布任务不存在，可能服务已重启或任务已过期",
+        )
+    return await maybe_refresh_canvas_video_task(task_id, task)
+
 
 # --- QCOS Gallery 资产库 ---
 
