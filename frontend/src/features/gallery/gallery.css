@@ -124,6 +124,9 @@
 .qc-gallery-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(172px, 1fr));
+  /* auto 行高 + stretch + 嵌套 grid + overflow hidden 组合下 Chromium
+     会把行高解析成单行文字高度，卡片塌成细条，必须显式按内容撑行 */
+  grid-auto-rows: max-content;
   gap: var(--qc-space-3);
   min-width: 0;
   min-height: 0;
@@ -154,7 +157,9 @@
   display: grid;
   place-items: center;
   width: 100%;
-  aspect-ratio: 1;
+  /* 用显式高度替代 aspect-ratio：网格自动行高解析时列宽未定，
+     aspect-ratio 撑不起行高，卡片会塌成细条 */
+  height: 200px;
   border: 0;
   background: var(--qc-surface-2);
   color: var(--qc-text-soft);
