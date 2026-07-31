@@ -1,0 +1,28 @@
+/* QCOS 主题桥：把上游画布页面暗色的藏青系表面色对齐到壳的中性灰。
+   本文件属于 QCOS（非上游），由 React 壳在 iframe onLoad 时注入，
+   不修改任何上游文件，上游合并永不冲突。
+   覆盖对象：canvas-list / canvas / smart-canvas 共用的暗色变量名。
+   仅覆盖中性表面色；强调色、语义色（危险红等）保持上游定义。 */
+
+html.theme-dark,
+html.studio-theme-dark,
+body.theme-dark,
+body.studio-theme-dark,
+/* 上游 theme.css 有 `.theme-dark body` 级别的变量重定义（0-1-1），
+   用 html.theme-dark body（0-1-2）确保覆盖 */
+html.theme-dark body,
+html.studio-theme-dark body {
+  --page: #101112;
+  --grid: rgba(255, 255, 255, 0.05);
+  --panel: rgba(24, 26, 27, 0.92);
+  --panel-solid: #181a1b;
+  --card: #181a1b;
+  --card-solid: #1d2022;
+  --soft: #202326;
+  --line: #303335;
+  --text: #f2f3ef;
+  --muted: #a5a8a1;
+  --faint: #83898f;
+  --strong: #e8e8ea;
+  --strong-text: #151515;
+}
