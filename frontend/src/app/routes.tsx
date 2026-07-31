@@ -99,12 +99,15 @@ export const APP_ROUTES: AppRoute[] = [
     icon: Images
   },
   {
+    // 画布直接承载上游原生画布（2026-07-31 拍板）：上游 canvas 是产品核心卖点且持续演进，
+    // 自研 React 画布（native-canvas）不再追赶，代码保留但不挂路由。
     id: "canvas",
     path: "canvas",
     label: "Canvas",
     shortLabel: "Canvas",
     description: "Infinite board",
-    kind: "native-canvas",
+    kind: "embedded",
+    src: "/static/canvas-list.html",
     group: "workspace",
     icon: Layers
   },
