@@ -272,7 +272,7 @@
 - [x] **Step 4: 运行两类 Canvas 成功/失败/409/刷新 focused Playwright 与构建**
 - [x] **Step 5: 更新进展并 commit**
 
-> 进展（2026-08-29）：先以经典 Canvas 打开后 0 次 intake 保存确认消费者缺失的失败基线。经典/智能 Canvas 现均在目标加载成功后读取队列，按节点类型映射并写入批次/素材幂等标记；保存 200 后才清对应批次，500/网络错误保留队列并显错，409 沿用原合并路径重试。服务端已有标记时刷新只清批次不重复插入。React 已删除 `native-canvas` RouteKind、静态 import 和渲染分支，源码仍保留；Creation Rail 只显示待处理数、保存状态和高级设置入口。`canvas-active` 仅控制两套元数据轮询，恢复时立即检查；frame 消息同时校验精确同源与登记 source。22 条 Canvas focused Playwright、`tsc --noEmit`、生产构建、三个静态 JS 语法检查与 diff 检查通过，生成包中无 `CanvasWorkspace`/`native-canvas` 引用；构建产物仍按计划留待 Task 6 统一提交。
+> 进展（2026-08-29）：先以经典 Canvas 打开后 0 次 intake 保存确认消费者缺失的失败基线。经典/智能 Canvas 现均在目标加载成功后读取队列，按节点类型映射并写入批次/素材幂等标记；保存 200 后才清对应批次，500/网络错误保留队列并显错。智能 Canvas 保留原有 409 节点/图片合并，最终审查又为经典 Canvas 补齐远端节点、连接、日志和媒体结果合并后重存，服务端已有标记时刷新只清批次不重复插入。React 已删除 `native-canvas` RouteKind、静态 import 和渲染分支，源码仍保留；Creation Rail 只显示待处理数、保存状态和高级设置入口。`canvas-active` 仅控制两套元数据轮询，恢复时立即检查；frame 消息同时校验精确同源与登记 source。生成包中无 `CanvasWorkspace`/`native-canvas` 引用。
 
 ### Task 6: QA 替换、文档与完整阶段门禁
 
@@ -336,11 +336,15 @@
 - 11 个副本 → 均可读取并保存；失败项带明确画布 ID/原因。
 - Git 状态 → 只含计划内文件；敏感/运行数据不在 index。
 
-- [ ] **Step 1: 建立临时运行数据并记录原始数据 hash**
-- [ ] **Step 2: 执行 APIMart、Comfly 有限真实请求与 MiniMax readiness**
-- [ ] **Step 3: 执行 11 个画布副本加载/保存 smoke 并核对原始 hash**
-- [ ] **Step 4: 更新 plan、handoff、TODO 与 `REVIEW_HANDOFF.md`**
-- [ ] **Step 5: 运行最终 focused closeout、提交且保持本地**
+- [x] **Step 1: 建立临时运行数据并记录原始数据 hash**
+- [x] **Step 2: 执行 APIMart、Comfly 有限真实请求与 MiniMax readiness**
+- [x] **Step 3: 执行 11 个画布副本加载/保存 smoke 并核对原始 hash**
+- [x] **Step 4: 更新 plan、handoff、TODO 与 `REVIEW_HANDOFF.md`**
+- [x] **Step 5: 运行最终 focused closeout、提交且保持本地**
+
+> 进展（2026-08-29）：验收应用运行在权限为 `0700` 的仓库外快照副本 `/Users/lianglei/.codex/tmp/v3-canvas-acceptance.80vMu9/app`，没有直接读取后写回原始数据。APIMart 仅提交 1 次最小请求，结果为 HTTP 200、返回 1 张图片；Comfly 仅提交 1 次，结果为 HTTP 401（密钥无效），按边界未重试。MiniMax H3 工作流 JSON 可加载并含 19 个节点，配置文件可加载并含 5 个字段，但本机 ComfyUI `127.0.0.1:8188` 不可达，节点与模型保持环境阻塞。7 个经典和 4 个智能画布副本均通过 API 读取/保存，并由真实无头浏览器完成 11/11 页面加载且无脚本错误；快照未包含历史输出图片，因此旧节点资源出现预期 404，不影响页面或画布保存。验收前后原始 11 个画布的 hash、大小和 mtime 变化为 0，原始供应商、项目和环境配置也与 Task 0 快照逐文件一致。
+
+> 收口（2026-08-29）：按 pre-landing review 对 `v3` 基线逐项审查并修复 7 个边界问题：经典 Canvas 409 真合并、旧高级设置字段保留、Smart Canvas 加载失败可见、全部相关 frame 消息同源/已知 source、RunningHub 静态模板加锁原子写入、V1 intake 结构损坏原样保留，以及 React LoRA 示例契约。最终 `py_compile` 通过；pytest 为 48 passed、2 subtests passed、8 条既有 deprecation warnings；两个指定 Playwright 文件合计 31 passed；React 生产构建成功；8 个变更静态 JS 与 `static/theme.js` 通过语法检查；HTTP 路由为 190/190（另有 1 条 WebSocket）；无 `postMessage(..., "*")`、无 React Canvas 生产包引用，`git diff --check` 和敏感产物扫描通过。原始快照对照 14 个文件仍为 0 差异。审查剩余代码问题为 0；Comfly、MiniMax/ComfyUI、ModelScope、RunningHub 的真实环境限制继续留在 `TODOS.md`，没有被伪报为通过。
 
 ## Self-check
 
