@@ -5194,6 +5194,8 @@ const smartClientId = `canvas_smart_${Math.random().toString(36).slice(2, 10)}${
 let canvasSyncInFlight = false;
 let canvasSyncTimer = null;
 let canvasMetaPollTimer = null;
+let smartCanvasWorkspaceActive = true;
+let pendingSmartCanvasIntake = null;
 let connectionLayerRaf = 0;
 function mergeSmartImageLists(localImgs, remoteImgs){
     const out = [];
@@ -5452,19 +5454,25 @@ function handleCanvasUpdatedMessage(data={}){
     if(remoteUpdatedAt && remoteUpdatedAt <= Number(canvas?.updated_at || 0)) return;
     scheduleCanvasMergeReload(200);
 }
+async function checkCanvasMetaNow(){
+    if(!smartCanvasWorkspaceActive || !canvasId || !canvas) return;
+    if(canvasSyncInFlight || dragState || selectionState) return;
+    try {
+        const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}/meta`);
+        if(!res.ok) return;
+        const meta = await res.json();
+        if(Number(meta.updated_at || 0) > Number(canvas.updated_at || 0)) mergeReloadCanvasNow();
+    } catch(e) {}
+}
+function stopCanvasMetaPoll(){
+    if(!canvasMetaPollTimer) return;
+    clearInterval(canvasMetaPollTimer);
+    canvasMetaPollTimer = null;
+}
 function startCanvasMetaPoll(){
     // WS / iframe 转发不可靠时的兜底：定期看服务器 updated_at 是否变新，变新就合并拉取
-    if(canvasMetaPollTimer) return;
-    canvasMetaPollTimer = setInterval(async () => {
-        if(!canvasId || !canvas) return;
-        if(canvasSyncInFlight || dragState || selectionState) return;
-        try {
-            const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}/meta`);
-            if(!res.ok) return;
-            const meta = await res.json();
-            if(Number(meta.updated_at || 0) > Number(canvas.updated_at || 0)) mergeReloadCanvasNow();
-        } catch(e) {}
-    }, 8000);
+    if(!smartCanvasWorkspaceActive || canvasMetaPollTimer) return;
+    canvasMetaPollTimer = setInterval(checkCanvasMetaNow, 8000);
 }
 function connectAssetLibrarySyncSocket(){
     if(window.parent && window.parent !== window) return;
@@ -6039,6 +6047,7 @@ async function loadCanvas(){
         resumeSmartPendingTasks();
         resumeJimengPendingNodes();
         startCanvasMetaPoll();
+        await consumeSmartCanvasIntake();
     } catch(e) { toast(tr('smart.toastCanvasFail')); }
 }
 function scheduleSave(){
@@ -6076,6 +6085,7 @@ async function saveCanvas(){
         if(res.ok){
             const data = await res.json();
             if(data.canvas && data.canvas.updated_at) canvas.updated_at = data.canvas.updated_at;
+            completeSmartCanvasIntakeAfterSave();
         } else if(res.status === 409) {
             // 冲突：别人先保存了。合并对方的状态（节点 id 合并、图片取并集，谁都不丢），
             // 然后用对方最新的 updated_at 作为基底重存，把合并结果落盘——而不是直接覆盖对方。
@@ -6093,10 +6103,122 @@ async function saveCanvas(){
             }
             clearTimeout(saveTimer);
             saveTimer = setTimeout(saveCanvas, 300);
+        } else {
+            throw new Error(await responseErrorMessage(res, 'Canvas save failed'));
         }
-    } catch(e) {} finally {
+    } catch(e) {
+        failPendingSmartCanvasIntake(e?.message || 'Canvas save failed');
+        toast(e?.message || 'Canvas save failed');
+    } finally {
         canvasSyncInFlight = false;
     }
+}
+function smartCanvasIntakeApi(){
+    return window.QCOSCanvasIntake || null;
+}
+function smartCanvasIntakeMessage(status, batchIds, itemCount, detail){
+    smartCanvasIntakeApi()?.notifyStatus({status, batch_ids:batchIds || [], item_count:itemCount || 0, detail:detail || ''});
+}
+function failPendingSmartCanvasIntake(detail){
+    if(!pendingSmartCanvasIntake) return;
+    smartCanvasIntakeMessage('failed', pendingSmartCanvasIntake.batchIds, pendingSmartCanvasIntake.itemCount, detail || 'Canvas intake save failed');
+}
+function completeSmartCanvasIntakeAfterSave(){
+    if(!pendingSmartCanvasIntake) return;
+    const pending = pendingSmartCanvasIntake;
+    pendingSmartCanvasIntake = null;
+    const cleared = smartCanvasIntakeApi()?.clearBatches(pending.batchIds);
+    if(!cleared?.ok){
+        const detail = cleared?.error || 'Canvas intake was saved but could not be cleared';
+        smartCanvasIntakeMessage('failed', pending.batchIds, pending.itemCount, detail);
+        toast(detail);
+        return;
+    }
+    smartCanvasIntakeMessage('succeeded', pending.batchIds, pending.itemCount, 'Canvas intake saved');
+}
+function smartIntakeNode(item, batchId, itemId, index){
+    const center = viewportCenter();
+    const media = {
+        url:item.url,
+        name:item.title || item.name || `Canvas intake ${index + 1}`,
+        title:item.title || '',
+        prompt:item.prompt || '',
+        source:item.source || '',
+        model:item.model || '',
+        type:item.type === 'output' ? 'output' : 'image',
+        kind:'image',
+        width:item.width,
+        height:item.height,
+        created_at:item.created_at || Date.now()
+    };
+    Object.keys(media).forEach(key => media[key] == null || media[key] === '' ? delete media[key] : null);
+    return {
+        id:uid('smart'),
+        type:'smart-image',
+        x:center.x - 140 + (index % 4) * 72,
+        y:center.y - 100 + Math.floor(index / 4) * 72,
+        title:item.title || (item.type === 'output' ? 'Canvas output' : 'Image'),
+        images:[media],
+        scale:MEDIA_NODE_DEFAULT_SCALE,
+        prompt:item.prompt || '',
+        source:item.source || '',
+        model:item.model || '',
+        created_at:item.created_at || Date.now(),
+        qcos_intake_batch_id:batchId,
+        qcos_intake_item_id:itemId
+    };
+}
+async function consumeSmartCanvasIntake(){
+    const intake = smartCanvasIntakeApi();
+    if(!intake || !canvas) return;
+    const current = intake.readQueue();
+    if(!current.ok){
+        smartCanvasIntakeMessage('failed', [], 0, current.error);
+        toast(current.error);
+        return;
+    }
+    const batches = current.queue?.batches || [];
+    if(!batches.length) return;
+    const existing = new Set((nodes || []).map(node => `${node.qcos_intake_batch_id || ''}\u0000${node.qcos_intake_item_id || ''}`));
+    const completedBatchIds = [];
+    const pendingBatchIds = [];
+    let pendingItemCount = 0;
+    let insertIndex = 0;
+    batches.forEach(batch => {
+        let missingInBatch = 0;
+        (batch.items || []).forEach((item, index) => {
+            const itemId = intake.itemKey(batch.id, item, index);
+            const key = `${batch.id}\u0000${itemId}`;
+            if(existing.has(key)) return;
+            nodes.push(smartIntakeNode(item, batch.id, itemId, insertIndex));
+            existing.add(key);
+            insertIndex += 1;
+            missingInBatch += 1;
+        });
+        if(missingInBatch){
+            pendingBatchIds.push(batch.id);
+            pendingItemCount += (batch.items || []).length;
+        } else {
+            completedBatchIds.push(batch.id);
+        }
+    });
+    if(completedBatchIds.length){
+        const cleared = intake.clearBatches(completedBatchIds);
+        const count = batches.filter(batch => completedBatchIds.includes(batch.id)).reduce((sum, batch) => sum + (batch.items || []).length, 0);
+        if(cleared.ok) smartCanvasIntakeMessage('succeeded', completedBatchIds, count, 'Previously saved Canvas intake cleared');
+        else {
+            smartCanvasIntakeMessage('failed', completedBatchIds, count, cleared.error);
+            toast(cleared.error);
+        }
+    }
+    if(!pendingBatchIds.length) return;
+    pendingSmartCanvasIntake = {batchIds:pendingBatchIds, itemCount:pendingItemCount};
+    canvas.nodes = nodes;
+    render();
+    smartCanvasIntakeMessage('saving', pendingBatchIds, pendingItemCount, 'Saving Canvas intake');
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    await saveCanvas();
 }
 function imageMetaFromNode(node){
     return {};
@@ -18926,13 +19048,24 @@ window.addEventListener('focus', () => {
     if(Date.now() - lastConfigRefreshAt > 1200) refreshSmartConfigFromSettings();
 });
 window.addEventListener('message', event => {
-    if(event.origin && event.origin !== location.origin) return;
+    if(event.origin !== location.origin) return;
+    const knownSource = event.source === window || event.source === window.parent || event.source === window.top;
+    if(!knownSource) return;
     if(event.data?.type === 'studio-theme') applyTheme(event.data.theme || 'light');
     if(event.data?.type === 'providers-changed' || event.data?.type === 'workflows-changed' || event.data?.type === 'comfy-instances-changed') refreshSmartConfigFromSettings();
     if(event.data?.type === 'asset_library_updated') handleAssetLibraryUpdatedMessage(event.data);
     if(event.data?.type === 'canvas_updated') handleCanvasUpdatedMessage(event.data);
     if(event.data?.type === 'studio-lang' && window.StudioI18n) {
         window.StudioI18n.set(event.data.lang || 'zh');
+    }
+    if(event.data?.type === 'canvas-active'){
+        smartCanvasWorkspaceActive = event.data.active === true;
+        if(smartCanvasWorkspaceActive){
+            startCanvasMetaPoll();
+            checkCanvasMetaNow();
+        } else {
+            stopCanvasMetaPoll();
+        }
     }
 });
 window.addEventListener('studio-lang-change', () => {

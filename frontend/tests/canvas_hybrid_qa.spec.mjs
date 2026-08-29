@@ -114,6 +114,109 @@ async function mockReactGalleryApis(page) {
   });
 }
 
+function intakeQueue(batchId = "batch-consumer") {
+  return {
+    version: 1,
+    batches: [{
+      id: batchId,
+      created_at: 123,
+      items: [
+        {
+          id: "image-a",
+          url: "https://example.test/intake-a.png",
+          title: "Intake image",
+          prompt: "editorial image",
+          source: "gallery",
+          model: "image-model",
+          type: "image",
+          width: 1024,
+          height: 768,
+          created_at: 120
+        },
+        {
+          id: "output-b",
+          url: "https://example.test/intake-b.png",
+          title: "Intake output",
+          prompt: "generated output",
+          source: "generate",
+          model: "output-model",
+          type: "output",
+          width: 768,
+          height: 1024,
+          created_at: 121
+        }
+      ]
+    }]
+  };
+}
+
+async function seedIntake(page, queue = intakeQueue()) {
+  await page.addInitScript((value) => {
+    localStorage.setItem("qcos_canvas_intake_items", JSON.stringify(value));
+    window.__intakeStatuses = [];
+    window.addEventListener("qcos:canvas-intake-status", (event) => window.__intakeStatuses.push(event.detail));
+  }, queue);
+}
+
+async function mockCanvasConsumerApis(page, {
+  kind = "classic",
+  canvasOverride = null,
+  putStatuses = [200]
+} = {}) {
+  const captured = { puts: [], metaCalls: 0 };
+  const baseCanvas = canvasOverride || {
+    id: "qa-canvas",
+    title: "Hybrid Canvas QA",
+    kind,
+    project: "default",
+    nodes: [],
+    connections: [],
+    viewport: { x: 0, y: 0, scale: 1 },
+    settings: {},
+    logs: [],
+    updated_at: 1
+  };
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/config") {
+      return route.fulfill({ json: {
+        api_providers: [{ id: "openai-main", name: "OpenAI", protocol: "openai", enabled: true, has_key: true }],
+        comfy_instances: [], image_models: ["image-model"], video_models: []
+      } });
+    }
+    if (path === "/api/providers") return route.fulfill({ json: { providers: [] } });
+    if (path === "/api/workflows") return route.fulfill({ json: { workflows: [] } });
+    if (path === "/api/canvases/qa-canvas/touch") {
+      return route.fulfill({ json: { canvas: { ...baseCanvas, updated_at: 1 } } });
+    }
+    if (path === "/api/canvases/qa-canvas/meta") {
+      captured.metaCalls += 1;
+      return route.fulfill({ json: { id: "qa-canvas", updated_at: 1 } });
+    }
+    if (path === "/api/canvases/qa-canvas" && request.method() === "GET") {
+      return route.fulfill({ json: { canvas: structuredClone(baseCanvas) } });
+    }
+    if (path === "/api/canvases/qa-canvas" && request.method() === "PUT") {
+      const payload = request.postDataJSON();
+      captured.puts.push(payload);
+      const status = putStatuses[Math.min(captured.puts.length - 1, putStatuses.length - 1)] ?? 200;
+      if (status === 409) {
+        return route.fulfill({
+          status: 409,
+          json: { detail: { canvas: { ...baseCanvas, updated_at: 2 }, updated_at: 2 } }
+        });
+      }
+      if (status >= 400) return route.fulfill({ status, json: { detail: `mock save ${status}` } });
+      return route.fulfill({ json: { canvas: { ...baseCanvas, ...payload, updated_at: 3 + captured.puts.length } } });
+    }
+    if (path === "/api/canvases") return route.fulfill({ json: { canvases: [baseCanvas] } });
+    if (path === "/api/assets" || path === "/api/local-assets") return route.fulfill({ json: { categories: [], items: [], tree: null } });
+    return route.fulfill({ json: {} });
+  });
+  return captured;
+}
+
 test("classic Canvas exposes Midjourney and MiniMax nodes without DX-OS", async ({ page }) => {
   await mockLegacyApis(page, "classic");
   await page.goto(`${BASE}/static/canvas.html?id=qa-canvas`, { waitUntil: "domcontentloaded" });
@@ -368,4 +471,205 @@ test("React reports localStorage failure and does not leave Gallery", async ({ p
   await page.getByRole("button", { name: "Send to Canvas" }).click();
   await expect(page.getByRole("alert")).toContainText(/storage|保存|写入|failed/i);
   expect(page.url()).toBe(before);
+});
+
+test("classic Canvas persists intake as image/output nodes before clearing batches", async ({ page }) => {
+  await seedIntake(page);
+  const captured = await mockCanvasConsumerApis(page, { kind: "classic" });
+  await page.goto(`${BASE}/static/canvas.html?id=qa-canvas`, { waitUntil: "domcontentloaded" });
+
+  await expect.poll(() => captured.puts.length).toBe(1);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("qcos_canvas_intake_items"))).toBeNull();
+  const intakeNodes = captured.puts[0].nodes.filter((node) => node.qcos_intake_batch_id === "batch-consumer");
+  expect(intakeNodes.map((node) => node.type)).toEqual(["image", "output"]);
+  expect(intakeNodes.map((node) => node.qcos_intake_item_id)).toEqual([
+    "batch-consumer:image-a:0",
+    "batch-consumer:output-b:1"
+  ]);
+  expect(intakeNodes[0]).toMatchObject({
+    url: "https://example.test/intake-a.png", prompt: "editorial image", source: "gallery", model: "image-model", width: 1024, height: 768
+  });
+  expect(intakeNodes[1].images[0]).toMatchObject({
+    url: "https://example.test/intake-b.png", prompt: "generated output", source: "generate", model: "output-model", width: 768, height: 1024
+  });
+  expect(await page.evaluate(() => window.__intakeStatuses.map((entry) => entry.status))).toEqual(expect.arrayContaining(["saving", "succeeded"]));
+});
+
+test("smart Canvas persists both intake kinds as smart-image nodes", async ({ page }) => {
+  await seedIntake(page);
+  const captured = await mockCanvasConsumerApis(page, { kind: "smart" });
+  await page.goto(`${BASE}/static/smart-canvas.html?id=qa-canvas`, { waitUntil: "domcontentloaded" });
+
+  await expect.poll(() => captured.puts.length).toBe(1);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("qcos_canvas_intake_items"))).toBeNull();
+  const intakeNodes = captured.puts[0].nodes.filter((node) => node.qcos_intake_batch_id === "batch-consumer");
+  expect(intakeNodes).toHaveLength(2);
+  expect(intakeNodes.every((node) => node.type === "smart-image")).toBe(true);
+  expect(intakeNodes.map((node) => node.qcos_intake_item_id)).toEqual([
+    "batch-consumer:image-a:0",
+    "batch-consumer:output-b:1"
+  ]);
+  expect(intakeNodes[1].images[0]).toMatchObject({
+    url: "https://example.test/intake-b.png", prompt: "generated output", source: "generate", model: "output-model"
+  });
+});
+
+for (const kind of ["classic", "smart"]) {
+  test(`${kind} Canvas retains intake and exposes a visible save error`, async ({ page }) => {
+    await seedIntake(page);
+    const captured = await mockCanvasConsumerApis(page, { kind, putStatuses: [500] });
+    const filename = kind === "smart" ? "smart-canvas.html" : "canvas.html";
+    await page.goto(`${BASE}/static/${filename}?id=qa-canvas`, { waitUntil: "domcontentloaded" });
+
+    await expect.poll(() => captured.puts.length).toBe(1);
+    expect(await page.evaluate(() => localStorage.getItem("qcos_canvas_intake_items"))).not.toBeNull();
+    if (kind === "classic") await expect(page.locator("#errorModal.open")).toContainText(/save|保存/i);
+    else await expect(page.locator("#toast.show")).toContainText(/save|保存/i);
+    expect(await page.evaluate(() => window.__intakeStatuses.at(-1)?.status)).toBe("failed");
+  });
+
+  test(`${kind} Canvas retries a 409 without duplicating intake nodes`, async ({ page }) => {
+    await seedIntake(page);
+    const captured = await mockCanvasConsumerApis(page, { kind, putStatuses: [409, 200] });
+    const filename = kind === "smart" ? "smart-canvas.html" : "canvas.html";
+    await page.goto(`${BASE}/static/${filename}?id=qa-canvas`, { waitUntil: "domcontentloaded" });
+
+    await expect.poll(() => captured.puts.length).toBe(2);
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("qcos_canvas_intake_items"))).toBeNull();
+    const lastNodes = captured.puts.at(-1).nodes.filter((node) => node.qcos_intake_batch_id === "batch-consumer");
+    expect(lastNodes).toHaveLength(2);
+    expect(new Set(lastNodes.map((node) => node.qcos_intake_item_id)).size).toBe(2);
+  });
+}
+
+test("saved intake markers clear a replayed batch without inserting or saving again", async ({ page }) => {
+  const queue = intakeQueue("batch-replayed");
+  const markedNodes = queue.batches[0].items.map((item, index) => ({
+    id: `saved-${index}`,
+    type: item.type === "output" ? "output" : "image",
+    x: 40 + index * 60,
+    y: 40 + index * 60,
+    url: item.url,
+    images: item.type === "output" ? [{ url: item.url }] : undefined,
+    qcos_intake_batch_id: "batch-replayed",
+    qcos_intake_item_id: `batch-replayed:${item.id}:${index}`
+  }));
+  await seedIntake(page, queue);
+  const captured = await mockCanvasConsumerApis(page, {
+    kind: "classic",
+    canvasOverride: {
+      id: "qa-canvas", title: "Replay QA", kind: "classic", project: "default",
+      nodes: markedNodes, connections: [], viewport: { x: 0, y: 0, scale: 1 }, settings: {}, logs: [], updated_at: 5
+    }
+  });
+  await page.goto(`${BASE}/static/canvas.html?id=qa-canvas`, { waitUntil: "domcontentloaded" });
+
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("qcos_canvas_intake_items"))).toBeNull();
+  expect(captured.puts).toHaveLength(0);
+  expect(await page.locator('[data-id^="saved-"]').count()).toBe(2);
+});
+
+test("Smart Canvas clears a replayed marked batch without duplicate insertion", async ({ page }) => {
+  const queue = intakeQueue("batch-smart-replayed");
+  const markedNodes = queue.batches[0].items.map((item, index) => ({
+    id: `smart-saved-${index}`,
+    type: "smart-image",
+    x: 40 + index * 60,
+    y: 40 + index * 60,
+    title: item.title,
+    images: [{ url: item.url, name: item.title }],
+    qcos_intake_batch_id: "batch-smart-replayed",
+    qcos_intake_item_id: `batch-smart-replayed:${item.id}:${index}`
+  }));
+  await seedIntake(page, queue);
+  const captured = await mockCanvasConsumerApis(page, {
+    kind: "smart",
+    canvasOverride: {
+      id: "qa-canvas", title: "Smart Replay QA", kind: "smart", project: "default",
+      nodes: markedNodes, connections: [], viewport: { x: 0, y: 0, scale: 1 }, settings: {}, logs: [], updated_at: 5
+    }
+  });
+  await page.goto(`${BASE}/static/smart-canvas.html?id=qa-canvas`, { waitUntil: "domcontentloaded" });
+
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("qcos_canvas_intake_items"))).toBeNull();
+  expect(captured.puts).toHaveLength(0);
+  expect(await page.locator('[data-id^="smart-saved-"]').count()).toBe(2);
+});
+
+test("canvas-active pauses classic metadata polling, ignores forged messages, and resumes immediately", async ({ page }) => {
+  const captured = await mockCanvasConsumerApis(page, { kind: "classic" });
+  await page.goto(`${BASE}/static/canvas.html?id=qa-canvas`, { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(2700);
+  expect(captured.metaCalls).toBeGreaterThan(0);
+
+  await page.evaluate(() => window.postMessage({ type: "canvas-active", active: false }, window.location.origin));
+  const pausedAt = captured.metaCalls;
+  await page.waitForTimeout(2800);
+  expect(captured.metaCalls).toBe(pausedAt);
+
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", {
+    data: { type: "canvas-active", active: true },
+    origin: "https://forged.example.test",
+    source: window
+  })));
+  await page.waitForTimeout(300);
+  expect(captured.metaCalls).toBe(pausedAt);
+
+  await page.evaluate(() => {
+    const unknownFrame = document.createElement("iframe");
+    unknownFrame.name = "unknown-message-source";
+    unknownFrame.src = "about:blank";
+    document.body.appendChild(unknownFrame);
+  });
+  const unknownFrame = page.frames().find((frame) => frame.name() === "unknown-message-source");
+  await unknownFrame.evaluate((origin) => window.parent.postMessage({ type: "canvas-active", active: true }, origin), BASE);
+  await page.waitForTimeout(300);
+  expect(captured.metaCalls).toBe(pausedAt);
+
+  await page.evaluate(() => window.postMessage({ type: "canvas-active", active: true }, window.location.origin));
+  await expect.poll(() => captured.metaCalls).toBeGreaterThan(pausedAt);
+});
+
+test("canvas-active pauses and immediately resumes Smart Canvas metadata polling", async ({ page }) => {
+  const captured = await mockCanvasConsumerApis(page, { kind: "smart" });
+  await page.goto(`${BASE}/static/smart-canvas.html?id=qa-canvas`, { waitUntil: "domcontentloaded" });
+  await page.evaluate(() => window.postMessage({ type: "canvas-active", active: false }, window.location.origin));
+  const pausedAt = captured.metaCalls;
+  await page.waitForTimeout(400);
+  expect(captured.metaCalls).toBe(pausedAt);
+
+  await page.evaluate(() => window.postMessage({ type: "canvas-active", active: true }, window.location.origin));
+  await expect.poll(() => captured.metaCalls).toBeGreaterThan(pausedAt);
+});
+
+test("React Canvas route loads only the embedded legacy workspace and a compact intake rail", async ({ page }) => {
+  await seedIntake(page, intakeQueue("batch-react-shell"));
+  await mockCanvasListApis(page);
+  await page.goto(`${VITE_BASE}/app/canvas`, { waitUntil: "domcontentloaded" });
+  await expect(page.locator('iframe[data-route="canvas"]')).toHaveCount(1);
+  await page.getByRole("button", { name: "Open Creation Rail" }).click();
+  await expect(page.getByRole("complementary", { name: "Creation Rail" })).toContainText(/2 pending|2 待处理/i);
+  await expect(page.getByRole("button", { name: /Advanced settings|高级设置/i })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Creation Rail" })).not.toContainText(/Nodes|Links|Run mode|Exec kind/i);
+  expect(await page.evaluate(() => performance.getEntriesByType("resource").map((entry) => entry.name).some((name) => name.includes("CanvasWorkspace")))).toBe(false);
+
+  const canvasFrame = page.frames().find((frame) => frame.url().includes("/static/canvas-list.html"));
+  expect(canvasFrame).toBeTruthy();
+  await canvasFrame.evaluate(() => window.parent.postMessage({
+    type: "canvas-intake-status", status: "saving", batch_ids: ["batch-react-shell"], item_count: 2, detail: "Saving Canvas intake"
+  }, window.location.origin));
+  await expect(page.getByRole("complementary", { name: "Creation Rail" })).toContainText("saving");
+
+  await page.evaluate(() => window.postMessage({
+    type: "canvas-intake-status", status: "failed", batch_ids: [], item_count: 0, detail: "forged source"
+  }, window.location.origin));
+  await page.evaluate(() => {
+    const frame = document.querySelector('iframe[data-route="canvas"]');
+    window.dispatchEvent(new MessageEvent("message", {
+      data: { type: "canvas-intake-status", status: "failed", batch_ids: [], item_count: 0, detail: "forged origin" },
+      origin: "https://forged.example.test",
+      source: frame.contentWindow
+    }));
+  });
+  await expect(page.getByRole("complementary", { name: "Creation Rail" })).toContainText("saving");
 });

@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, Image, Loader2, Send, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, Image, Loader2, Send, Settings2, X } from "lucide-react";
 import type { GalleryAsset, GenerateRecord, QueueStatus } from "../../lib/api";
 import type { CreationTaskSummary } from "../../lib/creation-state";
 import type { ProviderStatus } from "../../lib/provider-status";
@@ -6,7 +6,7 @@ import { generatedResultKey } from "../../lib/result-dedupe";
 import { IconButton } from "../controls/IconButton";
 import { Button } from "../controls/Button";
 import type { EditInputSummary } from "../../features/edit/EditWorkspace";
-import type { CanvasRailContext } from "../../features/canvas/CanvasWorkspace";
+import type { CanvasIntakeStatus } from "../../lib/canvas-intake";
 import type { AngleRailContext } from "../../features/angle/AngleWorkspace";
 import type { ApiModelsRailContext } from "../../features/api-models/ApiModelsWorkspace";
 import type { ComfyUIRailContext } from "../../features/comfyui/ComfyUIWorkspace";
@@ -37,7 +37,8 @@ interface CreationRailProps {
   galleryTask: CreationTaskSummary;
   gallerySelectedAssets: GalleryAsset[];
   canvasTask: CreationTaskSummary;
-  canvasContext: CanvasRailContext;
+  canvasIntakeCount: number;
+  canvasIntakeStatus: CanvasIntakeStatus;
   apiModelsTask: CreationTaskSummary;
   apiModelsContext: ApiModelsRailContext;
   comfyUITask: CreationTaskSummary;
@@ -45,6 +46,7 @@ interface CreationRailProps {
   onSendGalleryAssetsToCanvas?: (assets: GalleryAsset[]) => void;
   onSendRecentAssetToCanvas?: (asset: GalleryAsset) => void;
   onSendOutputToCanvas?: (record: GenerateRecord) => void;
+  onOpenAdvancedSettings: () => void;
   onClose: () => void;
 }
 
@@ -112,7 +114,8 @@ export function CreationRail({
   galleryTask,
   gallerySelectedAssets,
   canvasTask,
-  canvasContext,
+  canvasIntakeCount,
+  canvasIntakeStatus,
   apiModelsTask,
   apiModelsContext,
   comfyUITask,
@@ -120,6 +123,7 @@ export function CreationRail({
   onSendGalleryAssetsToCanvas,
   onSendRecentAssetToCanvas,
   onSendOutputToCanvas,
+  onOpenAdvancedSettings,
   onClose
 }: CreationRailProps) {
   const busy = Boolean(queueStatus?.total);
@@ -137,7 +141,7 @@ export function CreationRail({
           ? { label: "Gallery", task: galleryTask, outputs: [] }
           : activeRouteId === "canvas"
             ? { label: "Canvas", task: canvasTask, outputs: [] }
-            : activeRouteId === "api-config"
+            : activeRouteId === "api-config" || activeRouteId === "provider-settings"
               ? { label: "API / Models", task: apiModelsTask, outputs: [] }
               : activeRouteId === "comfyui-settings"
                 ? { label: "ComfyUI", task: comfyUITask, outputs: [] }
@@ -176,7 +180,7 @@ export function CreationRail({
       ? assetPrompt(selectedGalleryAsset) || assetTitle(selectedGalleryAsset)
       : "Select a Gallery asset to inspect metadata here."
     : canvasActive
-    ? canvasContext.detail || "Open a canvas to inspect board context here."
+    ? canvasTask.detail || "Choose a Classic or Smart Canvas target for queued assets."
     : angleActive
     ? angleContext.detail || "Upload a source image to show Angle context here."
     : apiModelsActive
@@ -271,44 +275,15 @@ export function CreationRail({
           </div>
         ) : canvasActive ? (
           <div className="qc-gallery-rail-detail">
-            <strong>{canvasContext.canvasTitle || "No canvas selected"}</strong>
-            <span>{canvasContext.selectedNodeTitle || canvasContext.detail}</span>
-            {canvasContext.selectedCanvasLastOutput || canvasContext.executionLastUrl ? (
-              <div className="qc-asset-strip">
-                <div className="qc-asset-thumb">
-                  <img src={canvasContext.selectedCanvasLastOutput || canvasContext.executionLastUrl} alt="Last Canvas output" />
-                </div>
-              </div>
-            ) : null}
+            <strong>{canvasIntakeCount} pending Canvas item{canvasIntakeCount === 1 ? "" : "s"}</strong>
+            <span>{canvasTask.detail || "Choose a Classic or Smart Canvas target."}</span>
             <dl>
-              <div><dt>Save</dt><dd>{canvasContext.saveState}</dd></div>
-              <div><dt>Nodes</dt><dd>{canvasContext.nodeCount}</dd></div>
-              <div><dt>Links</dt><dd>{canvasContext.connectionCount}</dd></div>
-              <div><dt>Node</dt><dd>{canvasContext.selectedNodeType || "None selected"}</dd></div>
-              <div><dt>Link</dt><dd>{canvasContext.selectedConnectionLabel || canvasContext.linkState || "No pending link"}</dd></div>
-              <div><dt>Pending</dt><dd>{canvasContext.pendingConnectionState || "No pending link"}</dd></div>
-              <div><dt>Link action</dt><dd>{canvasContext.lastConnectionAction || "No connection action yet."}</dd></div>
-              <div><dt>Intake</dt><dd>{canvasContext.intakeState || "No queued assets"}</dd></div>
-              <div><dt>Assets</dt><dd>{canvasContext.downloadableAssetCount}/{canvasContext.assetCount}</dd></div>
-              <div><dt>Asset action</dt><dd>{canvasContext.assetActionStatus || "idle"}</dd></div>
-              <div><dt>Execute</dt><dd>{canvasContext.executionStatus || "idle"}</dd></div>
-              <div><dt>Exec data</dt><dd>{canvasContext.executionDataReady ? "ready" : "needs input"}</dd></div>
-              <div><dt>Exec kind</dt><dd>{canvasContext.selectedExecutionNodeKind || "None"}</dd></div>
-              <div><dt>Run mode</dt><dd>{canvasContext.selectedCanvasExecutionMode || "None"}</dd></div>
-              <div><dt>Run state</dt><dd>{canvasContext.selectedCanvasRunStatus || "idle"}</dd></div>
-              {canvasContext.selectedLLMMode ? <div><dt>LLM mode</dt><dd>{canvasContext.selectedLLMMode}</dd></div> : null}
-              {canvasContext.selectedLLMRunStatus && canvasContext.selectedLLMMode ? <div><dt>LLM state</dt><dd>{canvasContext.selectedLLMRunStatus}</dd></div> : null}
-              {canvasContext.selectedLLMModel ? <div><dt>LLM model</dt><dd>{canvasContext.selectedLLMModel}</dd></div> : null}
-              {canvasContext.selectedLLMMode ? <div><dt>LLM inputs</dt><dd>{canvasContext.selectedLLMInputCount || 0}</dd></div> : null}
-              {canvasContext.selectedVideoMode ? <div><dt>Video mode</dt><dd>{canvasContext.selectedVideoMode}</dd></div> : null}
-              {canvasContext.selectedVideoRunStatus && canvasContext.selectedVideoMode ? <div><dt>Video state</dt><dd>{canvasContext.selectedVideoRunStatus}</dd></div> : null}
-              {canvasContext.selectedVideoModel ? <div><dt>Video model</dt><dd>{canvasContext.selectedVideoModel}</dd></div> : null}
-              {canvasContext.selectedVideoMode ? <div><dt>Video inputs</dt><dd>{canvasContext.selectedVideoInputCount || 0}</dd></div> : null}
-              {canvasContext.executionOutputCount ? <div><dt>Outputs</dt><dd>{canvasContext.executionOutputCount}</dd></div> : null}
-              {canvasContext.selectedCanvasOutputCount ? <div><dt>Node outputs</dt><dd>{canvasContext.selectedCanvasOutputCount}</dd></div> : null}
-              {canvasContext.selectedLLMOutputPreview ? <div><dt>LLM output</dt><dd>{canvasContext.selectedLLMOutputPreview.slice(0, 80)}</dd></div> : null}
-              {canvasContext.selectedVideoOutputPreview ? <div><dt>Video output</dt><dd>{canvasContext.selectedVideoOutputPreview}</dd></div> : null}
+              <div><dt>Pending</dt><dd>{canvasIntakeCount}</dd></div>
+              <div><dt>Save</dt><dd>{canvasIntakeStatus}</dd></div>
             </dl>
+            <Button variant="secondary" icon={<Settings2 size={15} strokeWidth={2} aria-hidden="true" />} onClick={onOpenAdvancedSettings}>
+              Advanced settings
+            </Button>
           </div>
         ) : angleActive ? (
           <div className="qc-gallery-rail-detail">
@@ -410,40 +385,11 @@ export function CreationRail({
         <h3 id="rail-context-title">Selected context</h3>
         {canvasActive ? (
           <div className="qc-gallery-rail-detail">
-            <strong>{canvasContext.canvasTitle || "Canvas"}</strong>
+            <strong>Canvas intake</strong>
             <span>{selectedContext}</span>
             <dl>
-              <div><dt>Canvas</dt><dd>{canvasContext.canvasId || "None"}</dd></div>
-              <div><dt>Selected</dt><dd>{canvasContext.selectedNodeTitle || "No node selected"}</dd></div>
-              <div><dt>Selected link</dt><dd>{canvasContext.selectedConnectionLabel || canvasContext.selectedConnectionId || "No link selected"}</dd></div>
-              <div><dt>Asset</dt><dd>{canvasContext.selectedAssetName || "No asset selected"}</dd></div>
-              <div><dt>Link</dt><dd>{canvasContext.pendingConnectionState || canvasContext.linkState || "No pending link"}</dd></div>
-              <div><dt>Link action</dt><dd>{canvasContext.lastConnectionAction || "No connection action yet."}</dd></div>
-              {canvasContext.connectionWarning ? <div><dt>Warning</dt><dd>{canvasContext.connectionWarning}</dd></div> : null}
-              <div><dt>Intake</dt><dd>{canvasContext.intakeState || "No queued assets"}</dd></div>
-              <div><dt>Assets</dt><dd>{canvasContext.downloadableAssetCount}/{canvasContext.assetCount}</dd></div>
-              <div><dt>Asset state</dt><dd>{canvasContext.lastAssetActionStatus || canvasContext.assetActionStatus || "idle"}</dd></div>
-              <div><dt>Execute</dt><dd>{canvasContext.executionStatus || "idle"}</dd></div>
-              <div><dt>Task</dt><dd>{canvasContext.executionTaskId || "None"}</dd></div>
-              <div><dt>Model</dt><dd>{[canvasContext.executionProvider, canvasContext.executionModel].filter(Boolean).join(" / ") || "Default"}</dd></div>
-              <div><dt>Run mode</dt><dd>{canvasContext.selectedCanvasExecutionMode || "None"}</dd></div>
-              <div><dt>Workflow</dt><dd>{canvasContext.selectedCanvasWorkflow || "None"}</dd></div>
-              <div><dt>Run state</dt><dd>{canvasContext.selectedCanvasRunStatus || "idle"}</dd></div>
-              {canvasContext.selectedLLMMode ? <div><dt>LLM mode</dt><dd>{canvasContext.selectedLLMMode}</dd></div> : null}
-              {canvasContext.selectedLLMRunStatus && canvasContext.selectedLLMMode ? <div><dt>LLM state</dt><dd>{canvasContext.selectedLLMRunStatus}</dd></div> : null}
-              {canvasContext.selectedLLMModel ? <div><dt>LLM model</dt><dd>{canvasContext.selectedLLMModel}</dd></div> : null}
-              {canvasContext.selectedLLMMode ? <div><dt>LLM inputs</dt><dd>{canvasContext.selectedLLMInputCount || 0}</dd></div> : null}
-              {canvasContext.selectedVideoMode ? <div><dt>Video mode</dt><dd>{canvasContext.selectedVideoMode}</dd></div> : null}
-              {canvasContext.selectedVideoRunStatus && canvasContext.selectedVideoMode ? <div><dt>Video state</dt><dd>{canvasContext.selectedVideoRunStatus}</dd></div> : null}
-              {canvasContext.selectedVideoModel ? <div><dt>Video model</dt><dd>{canvasContext.selectedVideoModel}</dd></div> : null}
-              {canvasContext.selectedVideoMode ? <div><dt>Video inputs</dt><dd>{canvasContext.selectedVideoInputCount || 0}</dd></div> : null}
-              <div><dt>Exec data</dt><dd>{canvasContext.executionDataReady ? "ready" : "needs input"}</dd></div>
-              <div><dt>Inputs</dt><dd>{`${canvasContext.graphPromptCount || 0}p/${canvasContext.graphImageRefCount || 0}i/${canvasContext.graphVideoRefCount || 0}v/${canvasContext.graphTextRefCount || 0}t`}</dd></div>
-              {canvasContext.graphInputWarnings ? <div><dt>Input warning</dt><dd>{canvasContext.graphInputWarnings}</dd></div> : null}
-              {canvasContext.selectedLLMOutputPreview ? <div><dt>LLM output</dt><dd>{canvasContext.selectedLLMOutputPreview.slice(0, 96)}</dd></div> : null}
-              {canvasContext.selectedVideoOutputPreview ? <div><dt>Video output</dt><dd>{canvasContext.selectedVideoOutputPreview}</dd></div> : null}
-              {canvasContext.executionError || canvasContext.selectedCanvasRunError || canvasContext.selectedLLMRunError || canvasContext.selectedVideoRunError ? <div><dt>Error</dt><dd>{canvasContext.executionError || canvasContext.selectedCanvasRunError || canvasContext.selectedLLMRunError || canvasContext.selectedVideoRunError}</dd></div> : null}
-              <div><dt>Status</dt><dd>{activeTask.status}</dd></div>
+              <div><dt>Pending</dt><dd>{canvasIntakeCount}</dd></div>
+              <div><dt>Save</dt><dd>{canvasIntakeStatus}</dd></div>
             </dl>
           </div>
         ) : angleActive ? (

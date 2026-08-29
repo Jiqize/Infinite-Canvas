@@ -266,11 +266,13 @@
 - 后台/返回 → 元数据轮询停/立即恢复，生成任务未取消。
 - `/app/canvas` → 只有旧 Canvas iframe；构建产物不包含 React Canvas 运行时 chunk/引用。
 
-- [ ] **Step 1: 写消费者/冻结/轮询失败 Playwright 用例并确认失败**
-- [ ] **Step 2: 接入经典与智能幂等消费者和状态消息**
-- [ ] **Step 3: 简化 Rail、冻结 React Canvas 运行时并实现 canvas-active**
-- [ ] **Step 4: 运行两类 Canvas 成功/失败/409/刷新 focused Playwright 与构建**
-- [ ] **Step 5: 更新进展并 commit**
+- [x] **Step 1: 写消费者/冻结/轮询失败 Playwright 用例并确认失败**
+- [x] **Step 2: 接入经典与智能幂等消费者和状态消息**
+- [x] **Step 3: 简化 Rail、冻结 React Canvas 运行时并实现 canvas-active**
+- [x] **Step 4: 运行两类 Canvas 成功/失败/409/刷新 focused Playwright 与构建**
+- [x] **Step 5: 更新进展并 commit**
+
+> 进展（2026-08-29）：先以经典 Canvas 打开后 0 次 intake 保存确认消费者缺失的失败基线。经典/智能 Canvas 现均在目标加载成功后读取队列，按节点类型映射并写入批次/素材幂等标记；保存 200 后才清对应批次，500/网络错误保留队列并显错，409 沿用原合并路径重试。服务端已有标记时刷新只清批次不重复插入。React 已删除 `native-canvas` RouteKind、静态 import 和渲染分支，源码仍保留；Creation Rail 只显示待处理数、保存状态和高级设置入口。`canvas-active` 仅控制两套元数据轮询，恢复时立即检查；frame 消息同时校验精确同源与登记 source。22 条 Canvas focused Playwright、`tsc --noEmit`、生产构建、三个静态 JS 语法检查与 diff 检查通过，生成包中无 `CanvasWorkspace`/`native-canvas` 引用；构建产物仍按计划留待 Task 6 统一提交。
 
 ### Task 6: QA 替换、文档与完整阶段门禁
 

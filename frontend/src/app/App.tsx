@@ -11,7 +11,6 @@ import { OnlineWorkspace, type OnlineTaskSummary } from "../features/online/Onli
 import { AngleWorkspace, type AngleRailContext, type AngleTaskSummary } from "../features/angle/AngleWorkspace";
 import { ChatWorkspace, type ChatTaskSummary } from "../features/chat/ChatWorkspace";
 import { GalleryWorkspace, type GalleryTaskSummary } from "../features/gallery/GalleryWorkspace";
-import { CanvasWorkspace, type CanvasRailContext, type CanvasTaskSummary } from "../features/canvas/CanvasWorkspace";
 import { ApiModelsWorkspace, type ApiModelsRailContext, type ApiModelsTaskSummary } from "../features/api-models/ApiModelsWorkspace";
 import { ComfyUIWorkspace, type ComfyUIRailContext, type ComfyUITaskSummary } from "../features/comfyui/ComfyUIWorkspace";
 import { EmbeddedWorkbench } from "../features/embedded/EmbeddedWorkbench";
@@ -27,13 +26,28 @@ import {
 import { providerStatusFromConfig } from "../lib/provider-status";
 import { getOrCreateClientId } from "../lib/storage";
 import { connectTaskStream } from "../lib/task-stream";
+import type { CreationTaskSummary } from "../lib/creation-state";
 import { applyTheme, readStoredTheme, type ThemeName } from "../lib/theme";
 import {
+  CANVAS_INTAKE_EVENT,
+  CANVAS_INTAKE_STATUS_EVENT,
+  CANVAS_INTAKE_STORAGE_KEY,
+  countCanvasIntakeItems,
   galleryAssetToCanvasIntakeItem,
   generateRecordToCanvasIntakeItem,
+  readCanvasIntakeQueue,
   writeCanvasIntakeItems,
-  type CanvasIntakeItem
+  type CanvasIntakeItem,
+  type CanvasIntakeStatus
 } from "../lib/canvas-intake";
+
+interface CanvasIntakeStatusMessage {
+  type: "canvas-intake-status";
+  status: CanvasIntakeStatus;
+  batch_ids: string[];
+  item_count: number;
+  detail: string;
+}
 
 export function App() {
   const [activeRoute, setActiveRoute] = useState<AppRoute>(() => routeFromLocation());
@@ -101,53 +115,17 @@ export function App() {
     detail: "No asset selected"
   });
   const [gallerySelectedAssets, setGallerySelectedAssets] = useState<GalleryAsset[]>([]);
-  const [canvasTask, setCanvasTask] = useState<CanvasTaskSummary>({
+  const [canvasTask, setCanvasTask] = useState<CreationTaskSummary>({
     status: "idle",
     label: "Canvas ready",
     detail: "No canvas selected"
   });
   const [canvasIntakeError, setCanvasIntakeError] = useState("");
-  const [canvasContext, setCanvasContext] = useState<CanvasRailContext>({
-    saveState: "idle",
-    nodeCount: 0,
-    connectionCount: 0,
-    linkState: "No pending link",
-    selectedConnectionId: "",
-    selectedConnectionLabel: "",
-    pendingConnectionState: "No pending link",
-    lastConnectionAction: "No connection action yet.",
-    connectionWarning: "",
-    assetCount: 0,
-    downloadableAssetCount: 0,
-    assetActionStatus: "idle",
-    lastAssetActionStatus: "Check local asset availability before downloading.",
-    selectedExecutionNodeKind: "",
-    graphPromptCount: 0,
-    graphImageRefCount: 0,
-    graphVideoRefCount: 0,
-    graphTextRefCount: 0,
-    graphInputWarnings: "",
-    executionDataReady: false,
-    selectedCanvasExecutionMode: "",
-    selectedCanvasWorkflow: "",
-    selectedCanvasRunStatus: "idle",
-    selectedCanvasRunError: "",
-    selectedCanvasOutputCount: 0,
-    selectedCanvasLastOutput: "",
-    selectedLLMMode: "",
-    selectedLLMRunStatus: "idle",
-    selectedLLMRunError: "",
-    selectedLLMModel: "",
-    selectedLLMInputCount: 0,
-    selectedLLMOutputPreview: "",
-    selectedVideoMode: "",
-    selectedVideoRunStatus: "idle",
-    selectedVideoRunError: "",
-    selectedVideoModel: "",
-    selectedVideoInputCount: 0,
-    selectedVideoOutputPreview: "",
-    detail: "No canvas selected"
+  const [canvasIntakeCount, setCanvasIntakeCount] = useState(() => {
+    const intake = readCanvasIntakeQueue();
+    return intake.ok ? countCanvasIntakeItems(intake.queue) : 0;
   });
+  const [canvasIntakeStatus, setCanvasIntakeStatus] = useState<CanvasIntakeStatus>(() => canvasIntakeCount ? "queued" : "succeeded");
   const [apiModelsTask, setApiModelsTask] = useState<ApiModelsTaskSummary>({
     status: "idle",
     label: "API providers ready",
@@ -306,6 +284,59 @@ export function App() {
     setTheme((current) => (current === "dark" ? "light" : "dark"));
   }, []);
 
+  const refreshCanvasIntake = useCallback(() => {
+    const intake = readCanvasIntakeQueue();
+    if (!intake.ok) {
+      setCanvasIntakeCount(0);
+      setCanvasIntakeError(intake.error);
+      setCanvasIntakeStatus("failed");
+      setCanvasTask({ status: "failed", label: "Canvas intake failed", detail: intake.error, error: intake.error });
+      return;
+    }
+    setCanvasIntakeCount(countCanvasIntakeItems(intake.queue));
+  }, []);
+
+  const handleCanvasIntakeStatus = useCallback((message: CanvasIntakeStatusMessage) => {
+    setCanvasIntakeStatus(message.status);
+    refreshCanvasIntake();
+    const detail = message.detail || `${message.item_count || 0} Canvas item${message.item_count === 1 ? "" : "s"}`;
+    if (message.status === "failed") {
+      setCanvasIntakeError(detail);
+      setCanvasTask({ status: "failed", label: "Canvas intake failed", detail, error: detail });
+      return;
+    }
+    setCanvasIntakeError("");
+    if (message.status === "saving") {
+      setCanvasTask({ status: "running", label: "Saving Canvas intake", detail });
+    } else if (message.status === "queued") {
+      setCanvasTask({ status: "pending", label: "Canvas intake queued", detail });
+    } else if (message.status === "succeeded") {
+      setCanvasTask({ status: "succeeded", label: "Canvas intake saved", detail });
+    } else {
+      setCanvasTask({ status: "idle", label: "Canvas intake cancelled", detail });
+    }
+  }, [refreshCanvasIntake]);
+
+  useEffect(() => {
+    const onQueue = () => refreshCanvasIntake();
+    const onStatus = (event: Event) => {
+      const detail = (event as CustomEvent<CanvasIntakeStatusMessage>).detail;
+      if (detail?.type === "canvas-intake-status") handleCanvasIntakeStatus(detail);
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === CANVAS_INTAKE_STORAGE_KEY) refreshCanvasIntake();
+    };
+    window.addEventListener(CANVAS_INTAKE_EVENT, onQueue);
+    window.addEventListener(CANVAS_INTAKE_STATUS_EVENT, onStatus);
+    window.addEventListener("storage", onStorage);
+    refreshCanvasIntake();
+    return () => {
+      window.removeEventListener(CANVAS_INTAKE_EVENT, onQueue);
+      window.removeEventListener(CANVAS_INTAKE_STATUS_EVENT, onStatus);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [handleCanvasIntakeStatus, refreshCanvasIntake]);
+
   const sendCanvasIntake = useCallback((items: CanvasIntakeItem[], detail: string) => {
     if (!canvasRoute) return;
     const queued = writeCanvasIntakeItems(items);
@@ -316,6 +347,8 @@ export function App() {
       return;
     }
     setCanvasIntakeError("");
+    setCanvasIntakeCount(queued.queue ? countCanvasIntakeItems(queued.queue) : items.length);
+    setCanvasIntakeStatus("queued");
     setCanvasTask({
       status: "pending",
       label: "Canvas intake queued",
@@ -451,17 +484,6 @@ export function App() {
               onSendAssetsToCanvas={sendGalleryAssetsToCanvas}
             />
           </div>
-        ) : activeRoute.kind === "native-canvas" ? (
-          <div className="qc-workbench qc-workbench--native">
-            <CanvasWorkspace
-              clientId={clientId}
-              apiConfig={apiConfig}
-              providerStatus={providerStatus}
-              taskMessage={taskMessage}
-              onTaskChange={setCanvasTask}
-              onContextChange={setCanvasContext}
-            />
-          </div>
         ) : activeRoute.kind === "native-api-models" ? (
           <div className="qc-workbench qc-workbench--native">
             <ApiModelsWorkspace
@@ -490,6 +512,7 @@ export function App() {
             theme={theme}
             taskMessage={taskMessage}
             onProvidersChanged={() => refreshApiConfig()}
+            onCanvasIntakeStatus={handleCanvasIntakeStatus}
           />
         )}
       </div>
@@ -519,7 +542,8 @@ export function App() {
         galleryTask={galleryTask}
         gallerySelectedAssets={gallerySelectedAssets}
         canvasTask={canvasTask}
-        canvasContext={canvasContext}
+        canvasIntakeCount={canvasIntakeCount}
+        canvasIntakeStatus={canvasIntakeStatus}
         apiModelsTask={apiModelsTask}
         apiModelsContext={apiModelsContext}
         comfyUITask={comfyUITask}
@@ -527,6 +551,9 @@ export function App() {
         onSendGalleryAssetsToCanvas={sendGalleryAssetsToCanvas}
         onSendRecentAssetToCanvas={sendRecentAssetToCanvas}
         onSendOutputToCanvas={sendOutputToCanvas}
+        onOpenAdvancedSettings={() => {
+          if (advancedProviderRoute) navigate(advancedProviderRoute);
+        }}
         onClose={() => setRailOpen(false)}
       />
       <MobileNav routes={APP_ROUTES} activeRoute={activeRoute} onNavigate={navigate} />

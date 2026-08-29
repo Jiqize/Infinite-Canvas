@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { AppRoute } from "../../app/routes";
+import type { CanvasIntakeStatus } from "../../lib/canvas-intake";
 import { postThemeToFrame, type ThemeName } from "../../lib/theme";
 
 // 上游暗色的藏青字面量 → 壳的中性灰。数字三元组匹配 rgb()/rgba() 序列化形式，
@@ -88,9 +89,16 @@ interface EmbeddedWorkbenchProps {
   theme: ThemeName;
   taskMessage: unknown;
   onProvidersChanged: () => void;
+  onCanvasIntakeStatus: (message: {
+    type: "canvas-intake-status";
+    status: CanvasIntakeStatus;
+    batch_ids: string[];
+    item_count: number;
+    detail: string;
+  }) => void;
 }
 
-export function EmbeddedWorkbench({ routes, activeRoute, theme, taskMessage, onProvidersChanged }: EmbeddedWorkbenchProps) {
+export function EmbeddedWorkbench({ routes, activeRoute, theme, taskMessage, onProvidersChanged, onCanvasIntakeStatus }: EmbeddedWorkbenchProps) {
   const [loadedIds, setLoadedIds] = useState<Set<string>>(() => new Set([activeRoute.id]));
   const frames = useRef(new Map<string, HTMLIFrameElement>());
   const pendingProviderEvent = useRef<unknown>(null);
@@ -109,6 +117,22 @@ export function EmbeddedWorkbench({ routes, activeRoute, theme, taskMessage, onP
   }, [theme, loadedIds]);
 
   useEffect(() => {
+    const canvas = frames.current.get("canvas");
+    try {
+      canvas?.contentWindow?.postMessage({ type: "canvas-active", active: activeRoute.id === "canvas" }, window.location.origin);
+    } catch {
+      // Ignore iframe teardown races.
+    }
+    return () => {
+      try {
+        canvas?.contentWindow?.postMessage({ type: "canvas-active", active: false }, window.location.origin);
+      } catch {
+        // Ignore iframe teardown races.
+      }
+    };
+  }, [activeRoute.id, loadedIds]);
+
+  useEffect(() => {
     if (!taskMessage) return;
     const frame = frames.current.get(activeRoute.id);
     try {
@@ -123,6 +147,19 @@ export function EmbeddedWorkbench({ routes, activeRoute, theme, taskMessage, onP
       if (event.origin !== window.location.origin) return;
       const knownSource = Array.from(frames.current.values()).some((frame) => frame.contentWindow === event.source);
       if (!knownSource) return;
+      if (event.data?.type === "canvas-intake-status") {
+        if (frames.current.get("canvas")?.contentWindow !== event.source) return;
+        const status = event.data.status as CanvasIntakeStatus;
+        if (!["queued", "saving", "succeeded", "failed", "cancelled"].includes(status)) return;
+        onCanvasIntakeStatus({
+          type: "canvas-intake-status",
+          status,
+          batch_ids: Array.isArray(event.data.batch_ids) ? event.data.batch_ids.map(String) : [],
+          item_count: Math.max(0, Number(event.data.item_count) || 0),
+          detail: String(event.data.detail || "")
+        });
+        return;
+      }
       if (event.data?.type !== "providers-changed") return;
       pendingProviderEvent.current = event.data;
       onProvidersChanged();
@@ -137,7 +174,7 @@ export function EmbeddedWorkbench({ routes, activeRoute, theme, taskMessage, onP
     };
     window.addEventListener("message", listener);
     return () => window.removeEventListener("message", listener);
-  }, [onProvidersChanged]);
+  }, [onCanvasIntakeStatus, onProvidersChanged]);
 
   return (
     <div className="qc-workbench" aria-label="Embedded workspace frame">
@@ -166,6 +203,13 @@ export function EmbeddedWorkbench({ routes, activeRoute, theme, taskMessage, onP
               if (route.id === "canvas" && pendingProviderEvent.current) {
                 try {
                   event.currentTarget.contentWindow?.postMessage(pendingProviderEvent.current, window.location.origin);
+                } catch {
+                  // Ignore.
+                }
+              }
+              if (route.id === "canvas") {
+                try {
+                  event.currentTarget.contentWindow?.postMessage({ type: "canvas-active", active }, window.location.origin);
                 } catch {
                   // Ignore.
                 }

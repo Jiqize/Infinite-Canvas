@@ -237,7 +237,9 @@ async function refreshCanvasConfigFromSettings(){
     if(typeof render === 'function') render();
 }
 window.addEventListener('message', event => {
-    if(event.origin && event.origin !== location.origin) return;
+    if(event.origin !== location.origin) return;
+    const knownSource = event.source === window || event.source === window.parent || event.source === window.top;
+    if(!knownSource) return;
     if(event.data?.type === 'studio-lang') applyLanguage(event.data.lang);
     if(event.data?.type === 'canvas_updated') handleCanvasUpdatedMessage(event.data);
     if(event.data?.type === 'providers-changed' || event.data?.type === 'workflows-changed' || event.data?.type === 'comfy-instances-changed'){
@@ -247,6 +249,15 @@ window.addEventListener('message', event => {
         // 从其他标签页切换回画布时，重新拉取工作流列表并刷新节点
         refreshCanvasConfigFromSettings();
         if(canvas) syncRemoteCanvasNow();
+    }
+    if(event.data?.type === 'canvas-active'){
+        canvasWorkspaceActive = event.data.active === true;
+        if(canvasWorkspaceActive){
+            startCanvasRemotePolling();
+            checkRemoteCanvasVersion();
+        } else {
+            stopCanvasRemotePolling();
+        }
     }
 });
 window.addEventListener('studio-lang-change', () => {
@@ -398,6 +409,8 @@ let remoteSyncTimer = null;
 let remoteSyncInterval = null;
 let remoteSyncBusy = false;
 let lastCanvasUpdatedAt = 0;
+let canvasWorkspaceActive = true;
+let pendingCanvasIntake = null;
 let models = {gpt:'gpt-image-2', nano:'nano-banana-pro'};
 let imageModels = ['gpt-image-2', 'nano-banana-pro'];
 let chatModels = ['gpt-4o-mini'];
@@ -1498,9 +1511,12 @@ async function saveCanvas(){
         localCanvasDirty = Boolean(saveCanvasAgain);
         if(currentCanvasTime) currentCanvasTime.textContent = formatCanvasTime(canvas.updated_at);
         setStatus('Saved');
+        completeCanvasIntakeAfterSave();
         loadCanvasList(false);
     } catch(e) {
         setStatus('Save failed');
+        failPendingCanvasIntake(e?.message || 'Canvas save failed');
+        if(pendingCanvasIntake) showErrorModal(e?.message || 'Canvas save failed', 'Canvas intake');
         console.error(e);
     } finally {
         savingCanvasNow = false;
@@ -1510,6 +1526,103 @@ async function saveCanvas(){
             setTimeout(saveCanvas, 0);
         }
     }
+}
+
+function canvasIntakeApi(){
+    return window.QCOSCanvasIntake || null;
+}
+function canvasIntakeMessage(status, batchIds, itemCount, detail){
+    canvasIntakeApi()?.notifyStatus({status, batch_ids:batchIds || [], item_count:itemCount || 0, detail:detail || ''});
+}
+function failPendingCanvasIntake(detail){
+    if(!pendingCanvasIntake) return;
+    canvasIntakeMessage('failed', pendingCanvasIntake.batchIds, pendingCanvasIntake.itemCount, detail || 'Canvas intake save failed');
+}
+function completeCanvasIntakeAfterSave(){
+    if(!pendingCanvasIntake) return;
+    const pending = pendingCanvasIntake;
+    pendingCanvasIntake = null;
+    const cleared = canvasIntakeApi()?.clearBatches(pending.batchIds);
+    if(!cleared?.ok){
+        const detail = cleared?.error || 'Canvas intake was saved but could not be cleared';
+        canvasIntakeMessage('failed', pending.batchIds, pending.itemCount, detail);
+        showErrorModal(detail, 'Canvas intake');
+        return;
+    }
+    canvasIntakeMessage('succeeded', pending.batchIds, pending.itemCount, 'Canvas intake saved');
+}
+function classicIntakeNode(item, batchId, itemId, index){
+    const point = defaultPoint(-180 + (index % 4) * 72, -100 + Math.floor(index / 4) * 72);
+    const media = {
+        url:item.url,
+        name:item.title || item.name || `Canvas intake ${index + 1}`,
+        title:item.title || '',
+        prompt:item.prompt || '',
+        source:item.source || '',
+        model:item.model || '',
+        width:item.width,
+        height:item.height,
+        created_at:item.created_at || Date.now()
+    };
+    Object.keys(media).forEach(key => media[key] == null || media[key] === '' ? delete media[key] : null);
+    const marker = {qcos_intake_batch_id:batchId, qcos_intake_item_id:itemId};
+    if(item.type === 'output'){
+        return {id:uid('out'), type:'output', x:point.x, y:point.y, title:item.title || 'Canvas output', images:[{...media}], ...media, ...marker};
+    }
+    return {id:uid('img'), type:'image', x:point.x, y:point.y, ...media, ...marker};
+}
+async function consumeClassicCanvasIntake(){
+    const intake = canvasIntakeApi();
+    if(!intake || !canvas) return;
+    const current = intake.readQueue();
+    if(!current.ok){
+        canvasIntakeMessage('failed', [], 0, current.error);
+        showErrorModal(current.error, 'Canvas intake');
+        return;
+    }
+    const batches = current.queue?.batches || [];
+    if(!batches.length) return;
+    const existing = new Set((nodes || []).map(node => `${node.qcos_intake_batch_id || ''}\u0000${node.qcos_intake_item_id || ''}`));
+    const completedBatchIds = [];
+    const pendingBatchIds = [];
+    let pendingItemCount = 0;
+    let insertIndex = 0;
+    batches.forEach(batch => {
+        let missingInBatch = 0;
+        (batch.items || []).forEach((item, index) => {
+            const itemId = intake.itemKey(batch.id, item, index);
+            const key = `${batch.id}\u0000${itemId}`;
+            if(existing.has(key)) return;
+            nodes.push(classicIntakeNode(item, batch.id, itemId, insertIndex));
+            existing.add(key);
+            insertIndex += 1;
+            missingInBatch += 1;
+        });
+        if(missingInBatch){
+            pendingBatchIds.push(batch.id);
+            pendingItemCount += (batch.items || []).length;
+        } else {
+            completedBatchIds.push(batch.id);
+        }
+    });
+    if(completedBatchIds.length){
+        const cleared = intake.clearBatches(completedBatchIds);
+        const count = batches.filter(batch => completedBatchIds.includes(batch.id)).reduce((sum, batch) => sum + (batch.items || []).length, 0);
+        if(cleared.ok) canvasIntakeMessage('succeeded', completedBatchIds, count, 'Previously saved Canvas intake cleared');
+        else {
+            canvasIntakeMessage('failed', completedBatchIds, count, cleared.error);
+            showErrorModal(cleared.error, 'Canvas intake');
+        }
+    }
+    if(!pendingBatchIds.length) return;
+    pendingCanvasIntake = {batchIds:pendingBatchIds, itemCount:pendingItemCount};
+    localCanvasDirty = true;
+    render();
+    setStatus('Saving intake...');
+    canvasIntakeMessage('saving', pendingBatchIds, pendingItemCount, 'Saving Canvas intake');
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    await saveCanvas();
 }
 
 async function loadConfig(){
@@ -2086,6 +2199,7 @@ async function openCanvas(id){
         resumeCanvasImageTasks();
         startCanvasRemotePolling();
         setStatus('Ready');
+        await consumeClassicCanvasIntake();
     } catch(e) {
         setStatus(tr('canvas.openFailed'));
         console.error(e);
@@ -2192,7 +2306,7 @@ async function syncRemoteCanvasNow(){
     }
 }
 async function checkRemoteCanvasVersion(){
-    if(!canvas || applyingRemoteCanvas || remoteSyncBusy) return;
+    if(!canvasWorkspaceActive || !canvas || applyingRemoteCanvas || remoteSyncBusy) return;
     if(document.hidden) return;
     remoteSyncBusy = true;
     try {
@@ -2211,6 +2325,7 @@ async function checkRemoteCanvasVersion(){
 }
 function startCanvasRemotePolling(){
     stopCanvasRemotePolling();
+    if(!canvasWorkspaceActive) return;
     remoteSyncInterval = setInterval(checkRemoteCanvasVersion, 2500);
 }
 function stopCanvasRemotePolling(){

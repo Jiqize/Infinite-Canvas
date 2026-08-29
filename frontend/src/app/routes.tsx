@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 
 export type RouteGroup = "create" | "workspace" | "system";
-export type RouteKind = "native-generate" | "native-enhance" | "native-edit" | "native-online" | "native-angle" | "native-chat" | "native-gallery" | "native-canvas" | "native-api-models" | "native-comfyui" | "embedded";
+export type RouteKind = "native-generate" | "native-enhance" | "native-edit" | "native-online" | "native-angle" | "native-chat" | "native-gallery" | "native-api-models" | "native-comfyui" | "embedded";
 
 export interface AppRoute {
   id: string;
