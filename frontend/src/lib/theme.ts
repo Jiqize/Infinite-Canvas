@@ -32,7 +32,7 @@ export function applyTheme(theme: ThemeName, persist = false): void {
 
 export function postThemeToFrame(frame: HTMLIFrameElement | null | undefined, theme: ThemeName): void {
   try {
-    frame?.contentWindow?.postMessage({ type: "studio-theme", theme }, "*");
+    frame?.contentWindow?.postMessage({ type: "studio-theme", theme }, window.location.origin);
   } catch {
     // Cross-document postMessage can fail during iframe teardown.
   }

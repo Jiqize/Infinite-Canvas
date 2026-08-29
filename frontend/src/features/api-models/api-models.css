@@ -145,6 +145,13 @@
   white-space: nowrap;
 }
 
+.qc-api-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--qc-space-2);
+}
+
 .qc-api-editor-body {
   display: grid;
   gap: var(--qc-space-4);

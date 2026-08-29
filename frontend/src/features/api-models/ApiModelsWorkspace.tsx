@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { AlertCircle, CheckCircle2, Database, KeyRound, ListPlus, Loader2, RefreshCw, Save, ShieldCheck, Trash2, Wifi } from "lucide-react";
+import { AlertCircle, CheckCircle2, Database, KeyRound, ListPlus, Loader2, RefreshCw, Save, Settings2, ShieldCheck, Trash2, Wifi } from "lucide-react";
 import {
   fetchProviderModels,
   getProviders,
@@ -7,7 +7,9 @@ import {
   saveProviders,
   testProviderConnection,
   type ApiConfig,
+  type ApiImageRequestMode,
   type ApiProvider,
+  type ApiProviderProtocol,
   type ApiProviderSavePayload,
   type ProviderConnectionPayload
 } from "../../lib/api";
@@ -44,13 +46,34 @@ interface ApiModelsWorkspaceProps {
   onTaskChange: (task: ApiModelsTaskSummary) => void;
   onContextChange: (context: ApiModelsRailContext) => void;
   onSaved: () => void;
+  onOpenAdvancedSettings: () => void;
 }
 
-type ApiProviderDraft = ApiProvider & {
+type ApiProviderDraft = Omit<ApiProvider,
+  | "base_url"
+  | "protocol"
+  | "image_request_mode"
+  | "enabled"
+  | "primary"
+  | "image_generation_endpoint"
+  | "image_edit_endpoint"
+  | "image_models"
+  | "chat_models"
+  | "video_models"
+  | "model_names"
+  | "model_protocols"
+  | "ms_loras"
+  | "ms_defaults_version"
+  | "rh_apps"
+  | "rh_workflows"
+  | "volcengine_project_name"
+  | "volcengine_region"
+> & {
   id: string;
   name: string;
   base_url: string;
-  protocol: string;
+  protocol: ApiProviderProtocol;
+  image_request_mode: ApiImageRequestMode;
   enabled: boolean;
   primary: boolean;
   image_generation_endpoint: string;
@@ -58,8 +81,14 @@ type ApiProviderDraft = ApiProvider & {
   image_models: string[];
   chat_models: string[];
   video_models: string[];
-  ms_loras: Record<string, unknown>;
-  ms_defaults_version: string;
+  model_names: Record<string, string>;
+  model_protocols: Record<string, string>;
+  ms_loras: Array<Record<string, unknown>>;
+  ms_defaults_version: number;
+  rh_apps: Array<Record<string, unknown>>;
+  rh_workflows: Array<Record<string, unknown>>;
+  volcengine_project_name: string;
+  volcengine_region: string;
 };
 
 type ProviderAction = "load" | "save" | "test" | "fetch" | "probe" | "clear" | "delete" | "idle";
@@ -69,6 +98,7 @@ const DEFAULT_PROVIDER: ApiProviderDraft = {
   name: "",
   base_url: "",
   protocol: "openai",
+  image_request_mode: "openai",
   enabled: true,
   primary: false,
   image_generation_endpoint: "",
@@ -76,30 +106,94 @@ const DEFAULT_PROVIDER: ApiProviderDraft = {
   image_models: [],
   chat_models: [],
   video_models: [],
-  ms_loras: {},
-  ms_defaults_version: "",
+  model_names: {},
+  model_protocols: {},
+  ms_loras: [],
+  ms_defaults_version: 0,
+  rh_apps: [],
+  rh_workflows: [],
+  volcengine_project_name: "",
+  volcengine_region: "",
   has_key: false,
   key_preview: "",
   key_env: ""
 };
 
+const PROVIDER_PROTOCOL_OPTIONS: ReadonlyArray<{ value: Exclude<ApiProviderProtocol, "tudou">; label: string }> = [
+  { value: "openai", label: "OpenAI compatible" },
+  { value: "apimart", label: "APIMart async" },
+  { value: "gemini", label: "Gemini API" },
+  { value: "gemini-cli", label: "Gemini CLI" },
+  { value: "volcengine", label: "Volcengine" },
+  { value: "runninghub", label: "RunningHub" },
+  { value: "jimeng", label: "Jimeng" },
+  { value: "codex", label: "Codex" }
+];
+
+const IMAGE_REQUEST_MODE_OPTIONS: ReadonlyArray<{ value: ApiImageRequestMode; label: string }> = [
+  { value: "openai", label: "OpenAI multipart" },
+  { value: "openai-json", label: "OpenAI JSON" },
+  { value: "openai-video-proxy", label: "OpenAI video proxy" },
+  { value: "openai-responses", label: "OpenAI Responses" },
+  { value: "tudou-async", label: "Tudou async" }
+];
+
+const SUPPORTED_PROTOCOLS = new Set<ApiProviderProtocol>([
+  ...PROVIDER_PROTOCOL_OPTIONS.map((item) => item.value),
+  "tudou"
+]);
+const SUPPORTED_IMAGE_MODES = new Set<ApiImageRequestMode>(IMAGE_REQUEST_MODE_OPTIONS.map((item) => item.value));
+
+function objectRecord(value: unknown, field: string): Record<string, string> {
+  if (value === undefined || value === null) return {};
+  if (typeof value !== "object" || Array.isArray(value)) throw new Error(`${field} must be an object.`);
+  const entries = Object.entries(value);
+  if (entries.some(([, item]) => typeof item !== "string")) throw new Error(`${field} values must be strings.`);
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+function objectArray(value: unknown, field: string): Array<Record<string, unknown>> {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.some((item) => !item || typeof item !== "object" || Array.isArray(item))) {
+    throw new Error(`${field} must be an array of objects.`);
+  }
+  return value.map((item) => ({ ...(item as Record<string, unknown>) }));
+}
+
+function integerValue(value: unknown, field: string): number {
+  if (value === undefined || value === null || value === "") return 0;
+  if (typeof value !== "number" || !Number.isInteger(value)) throw new Error(`${field} must be an integer.`);
+  return value;
+}
+
 function normalizeDraft(provider: ApiProvider): ApiProviderDraft {
+  const protocol = String(provider.protocol || "openai") as ApiProviderProtocol;
+  const imageRequestMode = String(provider.image_request_mode || "openai") as ApiImageRequestMode;
+  if (!SUPPORTED_PROTOCOLS.has(protocol)) throw new Error(`Unsupported provider protocol: ${protocol}`);
+  if (!SUPPORTED_IMAGE_MODES.has(imageRequestMode)) throw new Error(`Unsupported image request mode: ${imageRequestMode}`);
   return {
     ...DEFAULT_PROVIDER,
     ...provider,
     id: String(provider.id || "").trim().toLowerCase(),
     name: String(provider.name || provider.id || "").trim(),
     base_url: String(provider.base_url || "").trim(),
-    protocol: provider.protocol === "apimart" ? "apimart" : "openai",
+    protocol,
+    image_request_mode: imageRequestMode,
     enabled: provider.enabled !== false,
     primary: Boolean(provider.primary),
     image_generation_endpoint: String(provider.image_generation_endpoint || "").trim(),
     image_edit_endpoint: String(provider.image_edit_endpoint || "").trim(),
-    image_models: provider.image_models || [],
-    chat_models: provider.chat_models || [],
-    video_models: provider.video_models || [],
-    ms_loras: provider.ms_loras && typeof provider.ms_loras === "object" ? provider.ms_loras : {},
-    ms_defaults_version: String(provider.ms_defaults_version || ""),
+    image_models: Array.isArray(provider.image_models) ? [...provider.image_models] : [],
+    chat_models: Array.isArray(provider.chat_models) ? [...provider.chat_models] : [],
+    video_models: Array.isArray(provider.video_models) ? [...provider.video_models] : [],
+    model_names: objectRecord(provider.model_names, "model_names"),
+    model_protocols: objectRecord(provider.model_protocols, "model_protocols"),
+    ms_loras: objectArray(provider.ms_loras, "ms_loras"),
+    ms_defaults_version: integerValue(provider.ms_defaults_version, "ms_defaults_version"),
+    rh_apps: objectArray(provider.rh_apps, "rh_apps"),
+    rh_workflows: objectArray(provider.rh_workflows, "rh_workflows"),
+    volcengine_project_name: String(provider.volcengine_project_name || ""),
+    volcengine_region: String(provider.volcengine_region || ""),
     has_key: Boolean(provider.has_key),
     key_preview: provider.key_preview || "",
     key_env: provider.key_env || ""
@@ -118,11 +212,11 @@ function parseList(value: string): string[] {
 }
 
 function loraText(provider: ApiProviderDraft): string {
-  return provider.ms_loras && Object.keys(provider.ms_loras).length ? JSON.stringify(provider.ms_loras, null, 2) : "";
+  return provider.ms_loras.length ? JSON.stringify(provider.ms_loras, null, 2) : "";
 }
 
 function loraCount(provider: ApiProviderDraft): number {
-  return provider.ms_loras && typeof provider.ms_loras === "object" ? Object.keys(provider.ms_loras).length : 0;
+  return provider.ms_loras.length;
 }
 
 function keyStatus(provider: ApiProviderDraft): string {
@@ -133,12 +227,13 @@ function providerDetail(provider: ApiProviderDraft): string {
   return `${provider.id || "new"} · ${provider.protocol || "openai"} · ${keyStatus(provider)}`;
 }
 
-function publicProviderPayload(provider: ApiProviderDraft, loras: Record<string, unknown>): ApiProviderSavePayload {
+function publicProviderPayload(provider: ApiProviderDraft, loras: Array<Record<string, unknown>>): ApiProviderSavePayload {
   return {
     id: provider.id.trim().toLowerCase(),
     name: provider.name.trim() || provider.id.trim().toLowerCase(),
     base_url: provider.base_url.trim(),
     protocol: provider.protocol || "openai",
+    image_request_mode: provider.image_request_mode,
     enabled: provider.enabled,
     primary: provider.primary,
     image_generation_endpoint: provider.image_generation_endpoint.trim(),
@@ -146,26 +241,29 @@ function publicProviderPayload(provider: ApiProviderDraft, loras: Record<string,
     image_models: provider.image_models,
     chat_models: provider.chat_models,
     video_models: provider.video_models,
+    model_names: provider.model_names,
+    model_protocols: provider.model_protocols,
     ms_loras: loras,
-    ms_defaults_version: provider.ms_defaults_version.trim()
+    ms_defaults_version: provider.ms_defaults_version,
+    rh_apps: provider.rh_apps,
+    rh_workflows: provider.rh_workflows,
+    volcengine_project_name: provider.volcengine_project_name,
+    volcengine_region: provider.volcengine_region
   };
 }
 
-function parseLoras(text: string): Record<string, unknown> {
+function parseLoras(text: string): Array<Record<string, unknown>> {
   const clean = text.trim();
-  if (!clean) return {};
+  if (!clean) return [];
   const parsed = JSON.parse(clean) as unknown;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("ModelScope LoRA JSON must be an object.");
-  }
-  return parsed as Record<string, unknown>;
+  return objectArray(parsed, "ModelScope LoRA JSON");
 }
 
 function safeProviderId(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-");
 }
 
-export function ApiModelsWorkspace({ apiConfig, providerStatus, onTaskChange, onContextChange, onSaved }: ApiModelsWorkspaceProps) {
+export function ApiModelsWorkspace({ apiConfig, providerStatus, onTaskChange, onContextChange, onSaved, onOpenAdvancedSettings }: ApiModelsWorkspaceProps) {
   const [providers, setProviders] = useState<ApiProviderDraft[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [newKey, setNewKey] = useState("");
@@ -325,7 +423,7 @@ export function ApiModelsWorkspace({ apiConfig, providerStatus, onTaskChange, on
       applySavedProviders(response.providers || []);
       setStatusText(options.clearKey ? "Key cleared" : "Saved");
       setTask({ status: "succeeded", label: options.clearKey ? "API key cleared" : "API providers saved", detail: response.primary_provider_id || selectedProvider?.id || "" });
-      window.postMessage({ type: "providers-changed" }, "*");
+      window.postMessage({ type: "providers-changed" }, window.location.origin);
       onSaved();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Provider save failed.";
@@ -402,8 +500,14 @@ export function ApiModelsWorkspace({ apiConfig, providerStatus, onTaskChange, on
       image_models: [],
       chat_models: [],
       video_models: [],
-      ms_loras: {},
-      ms_defaults_version: ""
+      model_names: {},
+      model_protocols: {},
+      ms_loras: [],
+      ms_defaults_version: 0,
+      rh_apps: [],
+      rh_workflows: [],
+      volcengine_project_name: "",
+      volcengine_region: ""
     });
     setProviders((current) => [...current, next]);
     setLoraDrafts((current) => ({ ...current, [id]: "" }));
@@ -487,9 +591,14 @@ export function ApiModelsWorkspace({ apiConfig, providerStatus, onTaskChange, on
             <h3>{selectedProvider?.name || "Provider"}</h3>
             <span>{selectedProvider ? providerDetail(selectedProvider) : "Select a provider"}</span>
           </div>
-          <Button variant="primary" icon={activeAction === "save" ? <Loader2 className="qc-spin" size={16} strokeWidth={2} aria-hidden="true" /> : <Save size={16} strokeWidth={2} aria-hidden="true" />} onClick={() => void runSave()} disabled={!selectedProvider || busy}>
-            Save changes
-          </Button>
+          <div className="qc-api-editor-actions">
+            <Button variant="secondary" icon={<Settings2 size={16} strokeWidth={2} aria-hidden="true" />} onClick={onOpenAdvancedSettings}>
+              Advanced settings
+            </Button>
+            <Button variant="primary" icon={activeAction === "save" ? <Loader2 className="qc-spin" size={16} strokeWidth={2} aria-hidden="true" /> : <Save size={16} strokeWidth={2} aria-hidden="true" />} onClick={() => void runSave()} disabled={!selectedProvider || busy}>
+              Save changes
+            </Button>
+          </div>
         </header>
 
         {selectedProvider ? (
@@ -510,9 +619,14 @@ export function ApiModelsWorkspace({ apiConfig, providerStatus, onTaskChange, on
                   <input value={selectedProvider.base_url} spellCheck={false} placeholder="https://..." onChange={(event) => updateSelected({ base_url: event.target.value })} />
                 </Field>
                 <Field label="Protocol">
-                  <select value={selectedProvider.protocol} onChange={(event) => updateSelected({ protocol: event.target.value })}>
-                    <option value="openai">OpenAI compatible</option>
-                    <option value="apimart">APIMart async</option>
+                  <select value={selectedProvider.protocol} onChange={(event) => updateSelected({ protocol: event.target.value as ApiProviderProtocol })}>
+                    {selectedProvider.protocol === "tudou" ? <option value="tudou" disabled>Tudou legacy (read-only)</option> : null}
+                    {PROVIDER_PROTOCOL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Image request mode">
+                  <select value={selectedProvider.image_request_mode} onChange={(event) => updateSelected({ image_request_mode: event.target.value as ApiImageRequestMode })}>
+                    {IMAGE_REQUEST_MODE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                   </select>
                 </Field>
                 <Field label="Image generation endpoint">
@@ -580,10 +694,10 @@ export function ApiModelsWorkspace({ apiConfig, providerStatus, onTaskChange, on
               </div>
               <div className="qc-api-form-grid">
                 <Field label="LoRA JSON">
-                  <textarea className="qc-api-code-area" value={selectedLoras} spellCheck={false} placeholder='{"model/id":{"lora/id":1}}' onChange={(event) => setLoraDrafts((current) => ({ ...current, [selectedProvider.id]: event.target.value }))} />
+                  <textarea className="qc-api-code-area" value={selectedLoras} spellCheck={false} placeholder='[{"model_id":"model/id","weight":1}]' onChange={(event) => setLoraDrafts((current) => ({ ...current, [selectedProvider.id]: event.target.value }))} />
                 </Field>
                 <Field label="Model defaults version">
-                  <input value={selectedProvider.ms_defaults_version} spellCheck={false} placeholder="1" onChange={(event) => updateSelected({ ms_defaults_version: event.target.value })} />
+                  <input type="number" step="1" value={selectedProvider.ms_defaults_version} spellCheck={false} placeholder="1" onChange={(event) => updateSelected({ ms_defaults_version: event.target.value === "" ? 0 : Number(event.target.value) })} />
                 </Field>
               </div>
             </section>

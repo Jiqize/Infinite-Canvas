@@ -184,11 +184,13 @@
 - 打开 `/app/provider-settings` → iframe 指向旧高级页、导航隐藏、API / Models 高亮、返回路径正确。
 - 跨源或未知 source 的 `providers-changed` → 被忽略。
 
-- [ ] **Step 1: 写 Playwright/类型失败用例并确认失败**
-- [ ] **Step 2: 扩展公共类型和无损序列化**
-- [ ] **Step 3: 增加常用协议控件与隐藏高级路由**
-- [ ] **Step 4: 运行前端构建与供应商 focused Playwright**
-- [ ] **Step 5: 更新进展并 commit**
+- [x] **Step 1: 写 Playwright/类型失败用例并确认失败**
+- [x] **Step 2: 扩展公共类型和无损序列化**
+- [x] **Step 3: 增加常用协议控件与隐藏高级路由**
+- [x] **Step 4: 运行前端构建与供应商 focused Playwright**
+- [x] **Step 5: 更新进展并 commit**
+
+> 进展（2026-08-29）：先确认“Gemini 被改写为 OpenAI”和“隐藏高级路由不存在”两条失败基线。随后将 React 公共契约补齐为后端全部可写字段，`ms_loras` 固定为对象数组、`ms_defaults_version` 固定为整数；常用页可选 8 种新协议与 5 种图片请求模式，旧 `tudou` 仅对已有值显示并无损保存。新增 `/app/provider-settings` 隐藏、非保活 iframe，API / Models 侧栏保持高亮并可返回。主题和 `providers-changed` 改为精确同源发送，接收端同时校验 origin 与已登记 frame。5 条 focused Playwright 覆盖高级字段逐字段保留、旧 Tudou、无效类型显错、路由生命周期和伪造消息拒绝；`tsc -b`、生产构建与静态 JS 语法检查均通过。构建产物按计划留待 Task 6 统一生成和提交。
 
 ### Task 4: 共享 intake 队列与目标选择
 

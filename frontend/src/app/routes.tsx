@@ -25,6 +25,9 @@ export interface AppRoute {
   src?: string;
   group: RouteGroup;
   icon: LucideIcon;
+  nav?: boolean;
+  keepAlive?: boolean;
+  navParentId?: string;
 }
 
 export const APP_ROUTES: AppRoute[] = [
@@ -120,6 +123,20 @@ export const APP_ROUTES: AppRoute[] = [
     kind: "native-api-models",
     group: "system",
     icon: KeyRound
+  },
+  {
+    id: "provider-settings",
+    path: "provider-settings",
+    label: "Advanced Provider Settings",
+    shortLabel: "Advanced API",
+    description: "Provider-specific settings",
+    kind: "embedded",
+    src: "/static/api-settings.html",
+    group: "system",
+    icon: KeyRound,
+    nav: false,
+    keepAlive: false,
+    navParentId: "api-config"
   },
   {
     id: "comfyui-settings",

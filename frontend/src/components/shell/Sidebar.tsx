@@ -30,9 +30,9 @@ export function Sidebar({ routes, activeRoute, apiReady, onNavigate }: SidebarPr
         {groups.map((group) => (
           <div className="qc-nav-group" key={group}>
             <div className="qc-nav-group__label">{GROUP_LABELS[group]}</div>
-            {routes.filter((route) => route.group === group).map((route) => {
+            {routes.filter((route) => route.group === group && route.nav !== false).map((route) => {
               const Icon = route.icon;
-              const active = route.id === activeRoute.id;
+              const active = route.id === activeRoute.id || activeRoute.navParentId === route.id;
               return (
                 <button
                   className={`qc-nav-item${active ? " is-active" : ""}`}

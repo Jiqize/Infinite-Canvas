@@ -195,6 +195,7 @@ export function App() {
   );
   const embeddedRoutes = useMemo(() => APP_ROUTES.filter((route) => route.kind === "embedded"), []);
   const canvasRoute = useMemo(() => APP_ROUTES.find((route) => route.id === "canvas"), []);
+  const advancedProviderRoute = useMemo(() => APP_ROUTES.find((route) => route.id === "provider-settings"), []);
 
   const refreshApiConfig = useCallback((signal?: AbortSignal) => {
     getApiConfig(signal)
@@ -277,6 +278,7 @@ export function App() {
       }
     };
     const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || event.source !== window) return;
       if (event.data?.type === "api-config-updated" || event.data?.type === "providers-changed") {
         refreshApiConfig();
       }
@@ -455,6 +457,9 @@ export function App() {
               onTaskChange={setApiModelsTask}
               onContextChange={setApiModelsContext}
               onSaved={() => refreshApiConfig()}
+              onOpenAdvancedSettings={() => {
+                if (advancedProviderRoute) navigate(advancedProviderRoute);
+              }}
             />
           </div>
         ) : activeRoute.kind === "native-comfyui" ? (
@@ -471,6 +476,7 @@ export function App() {
             activeRoute={activeRoute}
             theme={theme}
             taskMessage={taskMessage}
+            onProvidersChanged={() => refreshApiConfig()}
           />
         )}
       </div>

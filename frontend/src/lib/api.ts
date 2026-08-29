@@ -1,10 +1,15 @@
 import { getLocalValue, STORAGE_KEYS } from "./storage";
 
+export type ApiProviderProtocol = "openai" | "apimart" | "gemini" | "gemini-cli" | "volcengine" | "runninghub" | "jimeng" | "codex" | "tudou";
+
+export type ApiImageRequestMode = "openai" | "openai-json" | "openai-video-proxy" | "openai-responses" | "tudou-async";
+
 export interface ApiProvider {
   id: string;
   name: string;
   base_url?: string;
-  protocol?: string;
+  protocol?: ApiProviderProtocol;
+  image_request_mode?: ApiImageRequestMode;
   enabled?: boolean;
   primary?: boolean;
   has_key?: boolean;
@@ -15,8 +20,23 @@ export interface ApiProvider {
   image_models?: string[];
   chat_models?: string[];
   video_models?: string[];
-  ms_loras?: Record<string, unknown>;
-  ms_defaults_version?: string;
+  model_names?: Record<string, string>;
+  model_protocols?: Record<string, string>;
+  ms_loras?: Array<Record<string, unknown>>;
+  ms_defaults_version?: number;
+  rh_apps?: Array<Record<string, unknown>>;
+  rh_workflows?: Array<Record<string, unknown>>;
+  volcengine_project_name?: string;
+  volcengine_region?: string;
+  has_wallet_key?: boolean;
+  wallet_key_preview?: string;
+  wallet_key_env?: string;
+  has_volcengine_access_key?: boolean;
+  volcengine_access_key_preview?: string;
+  volcengine_access_key_env?: string;
+  has_volcengine_secret_key?: boolean;
+  volcengine_secret_key_preview?: string;
+  volcengine_secret_key_env?: string;
 }
 
 export interface ApiConfig {
@@ -46,7 +66,13 @@ export interface ProvidersResponse {
 
 export type ApiProviderSavePayload = ApiProvider & {
   api_key?: string;
+  wallet_api_key?: string;
+  volcengine_access_key_id?: string;
+  volcengine_secret_access_key?: string;
   clear_key?: boolean;
+  clear_wallet_key?: boolean;
+  clear_volcengine_access_key_id?: boolean;
+  clear_volcengine_secret_access_key?: boolean;
 };
 
 export interface ProviderConnectionPayload {

@@ -11,9 +11,9 @@ const MOBILE_ROUTE_IDS = new Set(["zimage", "enhance", "klein", "online", "gpt-c
 export function MobileNav({ routes, activeRoute, onNavigate }: MobileNavProps) {
   return (
     <nav className="qc-mobile-nav" aria-label="Mobile primary">
-      {routes.filter((route) => MOBILE_ROUTE_IDS.has(route.id)).map((route) => {
+      {routes.filter((route) => route.nav !== false && MOBILE_ROUTE_IDS.has(route.id)).map((route) => {
         const Icon = route.icon;
-        const active = route.id === activeRoute.id;
+        const active = route.id === activeRoute.id || activeRoute.navParentId === route.id;
         return (
           <button
             className={`qc-mobile-nav__item${active ? " is-active" : ""}`}

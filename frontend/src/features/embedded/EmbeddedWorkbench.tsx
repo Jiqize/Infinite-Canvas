@@ -87,9 +87,10 @@ interface EmbeddedWorkbenchProps {
   activeRoute: AppRoute;
   theme: ThemeName;
   taskMessage: unknown;
+  onProvidersChanged: () => void;
 }
 
-export function EmbeddedWorkbench({ routes, activeRoute, theme, taskMessage }: EmbeddedWorkbenchProps) {
+export function EmbeddedWorkbench({ routes, activeRoute, theme, taskMessage, onProvidersChanged }: EmbeddedWorkbenchProps) {
   const [loadedIds, setLoadedIds] = useState<Set<string>>(() => new Set([activeRoute.id]));
   const frames = useRef(new Map<string, HTMLIFrameElement>());
   const pendingProviderEvent = useRef<unknown>(null);
@@ -111,7 +112,7 @@ export function EmbeddedWorkbench({ routes, activeRoute, theme, taskMessage }: E
     if (!taskMessage) return;
     const frame = frames.current.get(activeRoute.id);
     try {
-      frame?.contentWindow?.postMessage(taskMessage, "*");
+      frame?.contentWindow?.postMessage(taskMessage, window.location.origin);
     } catch {
       // Ignore iframe teardown races.
     }
@@ -119,24 +120,31 @@ export function EmbeddedWorkbench({ routes, activeRoute, theme, taskMessage }: E
 
   useEffect(() => {
     const listener = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const knownSource = Array.from(frames.current.values()).some((frame) => frame.contentWindow === event.source);
+      if (!knownSource) return;
       if (event.data?.type !== "providers-changed") return;
       pendingProviderEvent.current = event.data;
+      onProvidersChanged();
       const canvas = frames.current.get("canvas");
       try {
-        canvas?.contentWindow?.postMessage(event.data, "*");
+        if (canvas?.contentWindow !== event.source) {
+          canvas?.contentWindow?.postMessage(event.data, window.location.origin);
+        }
       } catch {
         // Canvas may not be loaded yet.
       }
     };
     window.addEventListener("message", listener);
     return () => window.removeEventListener("message", listener);
-  }, []);
+  }, [onProvidersChanged]);
 
   return (
     <div className="qc-workbench" aria-label="Embedded workspace frame">
       {routes.filter((route) => route.kind === "embedded").map((route) => {
         const active = route.id === activeRoute.id;
         const loaded = loadedIds.has(route.id);
+        if (!loaded || (route.keepAlive === false && !active)) return null;
         return (
           <iframe
             key={route.id}
@@ -149,7 +157,7 @@ export function EmbeddedWorkbench({ routes, activeRoute, theme, taskMessage }: E
             }}
             className={`qc-embedded-frame${active ? " is-active" : ""}`}
             title={route.label}
-            src={loaded ? route.src : undefined}
+            src={route.src}
             data-route={route.id}
             aria-hidden={active ? undefined : true}
             onLoad={(event) => {
@@ -157,7 +165,7 @@ export function EmbeddedWorkbench({ routes, activeRoute, theme, taskMessage }: E
               postThemeToFrame(event.currentTarget, theme);
               if (route.id === "canvas" && pendingProviderEvent.current) {
                 try {
-                  event.currentTarget.contentWindow?.postMessage(pendingProviderEvent.current, "*");
+                  event.currentTarget.contentWindow?.postMessage(pendingProviderEvent.current, window.location.origin);
                 } catch {
                   // Ignore.
                 }
