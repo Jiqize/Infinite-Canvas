@@ -13,8 +13,10 @@ frontend/node_modules/
 frontend/test-results/
 frontend/playwright-report/
 
-# Local secrets and secret backups (API/.env is an existing tracked template)
+# Local secrets and secret backups
+API/.env
 API/.env.*
+!API/.env.example
 API/*.local-backup
 
 # Runtime data and databases

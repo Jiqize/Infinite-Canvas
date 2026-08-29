@@ -162,7 +162,7 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 GLOBAL_LOOP = None
-APP_VERSION = "2026.06.03"
+APP_VERSION = "2026.08.29"
 GITHUB_REPO_URL = "https://github.com/hero8152/Infinite-Canvas"
 GITHUB_VERSION_URL = "https://raw.githubusercontent.com/hero8152/Infinite-Canvas/main/VERSION"
 GITHUB_TREE_URL = "https://api.github.com/repos/hero8152/Infinite-Canvas/git/trees/main?recursive=1"
@@ -22891,7 +22891,7 @@ def frontend_index_response():
         return Response(
             "<!doctype html><html><head><title>Feebee Studios</title></head>"
             "<body><h1>Frontend build missing</h1>"
-            "<p>Run <code>npm --prefix frontend run build</code> to generate the Quiet Creative OS shell.</p>"
+            "<p>Run <code>npm --prefix frontend run build</code> to generate the Feebee Studios shell.</p>"
             "</body></html>",
             status_code=503,
             media_type="text/html",
