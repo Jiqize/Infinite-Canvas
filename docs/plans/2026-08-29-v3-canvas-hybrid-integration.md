@@ -106,11 +106,13 @@
 - `GET providers → 修改一个公共字段 → save → GET` → `model_names/model_protocols/ms_loras/rh_apps/rh_workflows/volcengine_*` 未编辑值不变。
 - 路由审计 → 190/190。
 
-- [ ] **Step 1: 写后端失败契约测试并运行确认失败**
-- [ ] **Step 2: 逐语义移植供应商协议、Midjourney 与 MiniMax 后端**
-- [ ] **Step 3: 移植 MiniMax/RunningHub 运行资产并排除备份文件**
-- [ ] **Step 4: 运行两个新测试文件、现有相关 pytest、py_compile 与路由审计**
-- [ ] **Step 5: 更新进展并 commit**
+- [x] **Step 1: 写后端失败契约测试并运行确认失败**
+- [x] **Step 2: 逐语义移植供应商协议、Midjourney 与 MiniMax 后端**
+- [x] **Step 3: 移植 MiniMax/RunningHub 运行资产并排除备份文件**
+- [x] **Step 4: 运行两个新测试文件、现有相关 pytest、py_compile 与路由审计**
+- [x] **Step 5: 更新进展并 commit**
+
+> 进展（2026-08-29）：先得到 13 failed / 1 passed 的预期失败基线，再移植五条路由、Tudou 异步、APIMart/Gemini、Jimeng/RunningHub 修复和 MiniMax/RunningHub 资产。额外补齐 Midjourney 网络超时与 MiniMax ffmpeg 超时的明确 504，并按 spec 保留旧 `protocol=tudou`、对官方 host 自动启用 `tudou-async`。新契约与既有相关测试共 22 项通过，`py_compile` 通过，路由审计为 190/190；无 DX-OS 或备份文件。
 
 ### Task 2: 经典与智能 Canvas 上游功能同步
 
