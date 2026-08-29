@@ -560,6 +560,32 @@ test("Canvas List can create a Smart target without consuming intake", async ({ 
   expect(await page.evaluate(() => localStorage.getItem("qcos_canvas_intake_items"))).toBe(raw);
 });
 
+test("React Gallery defaults to a media-first workspace", async ({ page }) => {
+  await mockReactGalleryApis(page);
+  await page.goto(`${VITE_BASE}/app/gallery`, { waitUntil: "domcontentloaded" });
+
+  await expect(page.getByText("Gallery Intake Asset", { exact: true })).toBeVisible();
+  await expect(page.locator(".qc-gallery-filters, .qc-gallery-detail")).toHaveCount(0);
+  await expect(page.locator("#gallery-filter-panel")).toHaveCount(0);
+  await expect(page.locator(".qc-gallery-inspector")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Send to Canvas" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: /^Filters/ }).click();
+  await expect(page.locator("#gallery-filter-panel select")).toHaveCount(6);
+  await page.getByRole("button", { name: /^Filters/ }).click();
+  await expect(page.locator("#gallery-filter-panel")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Inspect Gallery Intake Asset" }).click();
+  await expect(page.locator(".qc-gallery-inspector")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".qc-gallery-inspector")).toHaveCount(0);
+
+  await page.getByLabel("Select asset").click();
+  await expect(page.getByText("1 selected", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Download selected" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send to Canvas" })).toBeVisible();
+});
+
 test("React reports localStorage failure and does not leave Gallery", async ({ page }) => {
   await mockReactGalleryApis(page);
   await page.goto(`${VITE_BASE}/app/gallery`, { waitUntil: "domcontentloaded" });

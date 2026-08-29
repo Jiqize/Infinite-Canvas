@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, Check, Copy, Download, ExternalLink, Eye, Heart, Image, Loader2, RefreshCw, Search, Send, Trash2, X } from "lucide-react";
+import { AlertCircle, Check, Copy, Download, ExternalLink, Eye, Heart, Image, Loader2, RefreshCw, Search, Send, SlidersHorizontal, Trash2, X } from "lucide-react";
 import type { GalleryAsset, GalleryFacets, GalleryFacetOption, QueueStatus } from "../../lib/api";
 import { downloadGalleryAssets, galleryDownloadUrl, getGalleryAssets, hideGalleryAsset, updateGalleryFavorite } from "../../lib/api";
 import type { CreationTaskSummary } from "../../lib/creation-state";
@@ -125,6 +125,7 @@ export function GalleryWorkspace({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [preview, setPreview] = useState<GalleryAsset | null>(null);
   const [actionStatus, setActionStatus] = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const activeAsset = useMemo(() => (
     assets.find((asset) => asset.id === activeId) || null
@@ -135,6 +136,9 @@ export function GalleryWorkspace({
     return activeAsset ? [activeAsset] : [];
   }, [activeAsset, assets, selectedIds]);
   const allPageSelected = assets.length > 0 && assets.every((asset) => asset.id && selectedIds.has(asset.id));
+  const activeFilterCount = [source, artifactType, status, model, date, favorite]
+    .filter((value) => value !== "all").length;
+  const hasActiveFilters = Boolean(searchInput.trim()) || activeFilterCount > 0;
   const queueDetail = queueStatus?.position
     ? `Queue ${queueStatus.position}/${queueStatus.total}`
     : `${queueStatus?.total ?? 0} queued`;
@@ -166,7 +170,7 @@ export function GalleryWorkspace({
         setPageSize(response.page_size || pageSize);
         setPages(response.pages || 1);
         setTotal(response.total || 0);
-        setActionStatus(nextAssets.length ? `${response.total || nextAssets.length} assets indexed` : "No assets match the current filters");
+        setActionStatus("");
         publishTask({
           status: "idle",
           label: "Gallery ready",
@@ -223,6 +227,17 @@ export function GalleryWorkspace({
     }
   }, [errorText, isLoading, onSelectedAssetsChange, publishTask, selectedAssets, total]);
 
+  useEffect(() => {
+    if (!activeAsset && !preview) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (preview) setPreview(null);
+      else setActiveId("");
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeAsset, preview]);
+
   const resetFilters = useCallback(() => {
     setSearchInput("");
     setQuery("");
@@ -233,6 +248,7 @@ export function GalleryWorkspace({
     setDate("all");
     setFavorite("all");
     setPage(1);
+    setFiltersOpen(false);
   }, []);
 
   const setFilter = useCallback((setter: (value: string) => void, value: string) => {
@@ -342,222 +358,258 @@ export function GalleryWorkspace({
     setActionStatus(`${items.length} asset${items.length === 1 ? "" : "s"} sent to Canvas`);
   }, [onSendAssetsToCanvas, selectedAssets]);
 
-  const currentStatus = errorText || (isLoading ? "Loading gallery assets" : actionStatus || `${total} assets match`);
+  const currentStatus = errorText || (isLoading
+    ? "Loading assets"
+    : actionStatus || `${total} asset${total === 1 ? "" : "s"}`);
   const activeStatus = errorText ? "error" : isLoading ? "busy" : "idle";
 
   return (
     <div className="qc-gallery-workspace">
-      <aside className="qc-gallery-filters" aria-label="Gallery filters">
-        <div className="qc-generate-panel__head">
-          <div>
-            <h2>Gallery</h2>
-            <p>{queueDetail}</p>
-          </div>
-        </div>
-
-        <label className="qc-gallery-search">
-          <Search size={16} strokeWidth={2} aria-hidden="true" />
-          <input
-            value={searchInput}
-            onChange={(event) => setSearchInput(event.target.value)}
-            placeholder="Search prompt, model, filename..."
-            type="search"
-          />
-        </label>
-
-        <div className="qc-online-select-grid qc-gallery-select-grid">
-          <label className="qc-select-field">
-            <span>Source</span>
-            <select value={source} onChange={(event) => setFilter(setSource, event.target.value)}>
-              {facetOptions(facets.sources, "All sources").map((option) => (
-                <option key={option.value} value={option.value}>{optionLabel(option)}</option>
-              ))}
-            </select>
-          </label>
-          <label className="qc-select-field">
-            <span>Artifact</span>
-            <select value={artifactType} onChange={(event) => setFilter(setArtifactType, event.target.value)}>
-              {facetOptions(facets.artifact_types, "All artifacts").map((option) => (
-                <option key={option.value} value={option.value}>{optionLabel(option)}</option>
-              ))}
-            </select>
-          </label>
-          <label className="qc-select-field">
-            <span>Status</span>
-            <select value={status} onChange={(event) => setFilter(setStatus, event.target.value)}>
-              {facetOptions(facets.statuses, "All statuses").map((option) => (
-                <option key={option.value} value={option.value}>{optionLabel(option)}</option>
-              ))}
-            </select>
-          </label>
-          <label className="qc-select-field">
-            <span>Model</span>
-            <select value={model} onChange={(event) => setFilter(setModel, event.target.value)}>
-              {facetOptions(facets.models, "All models").map((option) => (
-                <option key={option.value} value={option.value}>{optionLabel(option)}</option>
-              ))}
-            </select>
-          </label>
-          <label className="qc-select-field">
-            <span>Date</span>
-            <select value={date} onChange={(event) => setFilter(setDate, event.target.value)}>
-              {DATE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          <label className="qc-select-field">
-            <span>Favorite</span>
-            <select value={favorite} onChange={(event) => {
-              setFavorite(event.target.value as FavoriteFilter);
-              setPage(1);
-            }}>
-              <option value="all">All assets</option>
-              <option value="true">Favorites ({facets.favorites || 0})</option>
-            </select>
-          </label>
-        </div>
-
-        <div className="qc-generate-status" data-state={activeStatus}>
-          {errorText ? <AlertCircle size={16} strokeWidth={2} aria-hidden="true" /> : isLoading ? <Loader2 className="qc-spin" size={16} strokeWidth={2} aria-hidden="true" /> : <Image size={16} strokeWidth={2} aria-hidden="true" />}
-          <span>{currentStatus}</span>
-        </div>
-
-        <div className="qc-gallery-filter-actions">
-          <Button variant="secondary" icon={<RefreshCw size={15} strokeWidth={2} aria-hidden="true" />} onClick={() => loadAssets()}>
-            Refresh
-          </Button>
-          <Button variant="ghost" onClick={resetFilters}>Clear filters</Button>
-        </div>
-      </aside>
-
       <main className="qc-gallery-main" aria-label="Gallery assets">
-        <header className="qc-gallery-toolbar">
-          <div>
-            <h2>Assets</h2>
-            <p>Page {page} of {pages} - {total} indexed assets</p>
-          </div>
-          <div className="qc-gallery-toolbar__actions">
-            <Button variant="ghost" onClick={togglePageSelection}>
-              {allPageSelected ? "Clear page" : "Select page"}
-            </Button>
-            <Button
-              variant="secondary"
-              icon={<Download size={15} strokeWidth={2} aria-hidden="true" />}
-              disabled={!selectedIds.size}
-              onClick={() => void downloadSelected()}
-            >
-              Download selected
-            </Button>
-            <Button
-              variant="secondary"
-              icon={<Send size={15} strokeWidth={2} aria-hidden="true" />}
-              disabled={!selectedAssets.length || !onSendAssetsToCanvas}
-              onClick={() => sendSelectedToCanvas()}
-            >
-              Send to Canvas
-            </Button>
-          </div>
-        </header>
-
-        {isLoading ? (
-          <div className="qc-render-card qc-gallery-loading">
-            <div className="qc-render-card__preview"><span /></div>
-            <div>
-              <strong>Loading Gallery</strong>
-              <p>Indexing outputs, canvas assets, chats, and batches.</p>
+        <header className="qc-gallery-commandbar">
+          <div className="qc-gallery-commandbar__primary">
+            <label className="qc-gallery-search">
+              <Search size={16} strokeWidth={2} aria-hidden="true" />
+              <input
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+                placeholder="Search assets"
+                type="search"
+              />
+            </label>
+            <div className="qc-gallery-commandbar__actions">
+              <Button
+                className={activeFilterCount ? "is-active" : ""}
+                variant="secondary"
+                icon={<SlidersHorizontal size={15} strokeWidth={2} aria-hidden="true" />}
+                aria-expanded={filtersOpen}
+                aria-controls="gallery-filter-panel"
+                onClick={() => setFiltersOpen((current) => !current)}
+              >
+                Filters{activeFilterCount ? ` ${activeFilterCount}` : ""}
+              </Button>
+              <IconButton label="Refresh Gallery" onClick={() => loadAssets()}>
+                <RefreshCw size={15} strokeWidth={2} aria-hidden="true" />
+              </IconButton>
+              {assets.length ? (
+                <Button variant="ghost" onClick={togglePageSelection}>
+                  {allPageSelected ? "Clear page" : "Select page"}
+                </Button>
+              ) : null}
+            </div>
+            <div className="qc-gallery-status" data-state={activeStatus} role="status" aria-live="polite">
+              {errorText ? <AlertCircle size={14} strokeWidth={2} aria-hidden="true" /> : null}
+              {isLoading ? <Loader2 className="qc-spin" size={14} strokeWidth={2} aria-hidden="true" /> : null}
+              <span>{currentStatus}</span>
+              {(queueStatus?.total ?? 0) > 0 ? <em>{queueDetail}</em> : null}
             </div>
           </div>
-        ) : null}
 
-        {!isLoading && errorText ? (
-          <div className="qc-results-empty" data-state="error">
-            <AlertCircle size={22} strokeWidth={1.8} aria-hidden="true" />
-            <strong>Gallery unavailable</strong>
-            <span>{errorText}</span>
-          </div>
-        ) : null}
+          {filtersOpen ? (
+            <div className="qc-gallery-filter-panel" id="gallery-filter-panel" aria-label="Gallery filters">
+              <div className="qc-online-select-grid qc-gallery-select-grid">
+                <label className="qc-select-field">
+                  <span>Source</span>
+                  <select value={source} onChange={(event) => setFilter(setSource, event.target.value)}>
+                    {facetOptions(facets.sources, "All sources").map((option) => (
+                      <option key={option.value} value={option.value}>{optionLabel(option)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="qc-select-field">
+                  <span>Artifact</span>
+                  <select value={artifactType} onChange={(event) => setFilter(setArtifactType, event.target.value)}>
+                    {facetOptions(facets.artifact_types, "All artifacts").map((option) => (
+                      <option key={option.value} value={option.value}>{optionLabel(option)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="qc-select-field">
+                  <span>Status</span>
+                  <select value={status} onChange={(event) => setFilter(setStatus, event.target.value)}>
+                    {facetOptions(facets.statuses, "All statuses").map((option) => (
+                      <option key={option.value} value={option.value}>{optionLabel(option)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="qc-select-field">
+                  <span>Model</span>
+                  <select value={model} onChange={(event) => setFilter(setModel, event.target.value)}>
+                    {facetOptions(facets.models, "All models").map((option) => (
+                      <option key={option.value} value={option.value}>{optionLabel(option)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="qc-select-field">
+                  <span>Date</span>
+                  <select value={date} onChange={(event) => setFilter(setDate, event.target.value)}>
+                    {DATE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="qc-select-field">
+                  <span>Favorite</span>
+                  <select value={favorite} onChange={(event) => {
+                    setFavorite(event.target.value as FavoriteFilter);
+                    setPage(1);
+                  }}>
+                    <option value="all">All assets</option>
+                    <option value="true">Favorites ({facets.favorites || 0})</option>
+                  </select>
+                </label>
+              </div>
+              <Button variant="ghost" onClick={resetFilters} disabled={!hasActiveFilters}>
+                Clear filters
+              </Button>
+            </div>
+          ) : null}
 
-        {!isLoading && !errorText && !assets.length ? (
-          <div className="qc-results-empty">
-            <Image size={22} strokeWidth={1.8} aria-hidden="true" />
-            <strong>No assets found</strong>
-            <span>Adjust filters or create new outputs.</span>
-          </div>
-        ) : null}
+          {selectedIds.size ? (
+            <div className="qc-gallery-selectionbar">
+              <strong>{selectedIds.size} selected</strong>
+              <Button variant="ghost" onClick={() => setSelectedIds(new Set())}>Clear</Button>
+              <Button
+                variant="secondary"
+                icon={<Download size={15} strokeWidth={2} aria-hidden="true" />}
+                onClick={() => void downloadSelected()}
+              >
+                Download selected
+              </Button>
+              <Button
+                variant="primary"
+                icon={<Send size={15} strokeWidth={2} aria-hidden="true" />}
+                disabled={!onSendAssetsToCanvas}
+                onClick={() => sendSelectedToCanvas()}
+              >
+                Send to Canvas
+              </Button>
+            </div>
+          ) : null}
+        </header>
 
-        {!errorText && assets.length ? (
-          <div className="qc-gallery-grid">
-            {assets.map((asset) => {
-              const selected = Boolean(asset.id && selectedIds.has(asset.id));
-              const active = activeId === asset.id;
-              const src = assetImage(asset);
-              return (
-                <article
-                  className={`qc-gallery-card${active ? " is-active" : ""}${selected ? " is-selected" : ""}`}
-                  key={asset.id || asset.url}
-                >
-                  <button className="qc-gallery-card__image" type="button" onClick={() => setActiveId(asset.id || "")}>
-                    {src ? <img src={src} alt={assetTitle(asset)} loading="lazy" /> : <Image size={24} strokeWidth={1.8} aria-hidden="true" />}
-                  </button>
-                  <div className="qc-gallery-card__actions">
-                    <IconButton label={selected ? "Deselect asset" : "Select asset"} onClick={() => toggleSelected(asset)}>
-                      {selected ? <Check size={14} strokeWidth={2} aria-hidden="true" /> : <span className="qc-gallery-select-dot" />}
-                    </IconButton>
-                    <IconButton label={asset.favorite ? "Remove favorite" : "Favorite asset"} onClick={() => void toggleFavorite(asset)}>
-                      <Heart size={14} strokeWidth={2} aria-hidden="true" fill={asset.favorite ? "currentColor" : "none"} />
-                    </IconButton>
-                  </div>
-                  <div className="qc-gallery-card__body" onClick={() => setActiveId(asset.id || "")}>
-                    <p title={assetTitle(asset)}>{assetTitle(asset)}</p>
-                    <span title={assetPrompt(asset)}>{assetPrompt(asset) || asset.filename || "No prompt"}</span>
-                    <div className="qc-gallery-badges">
-                      <em>{asset.artifact_label || asset.artifact_type || "Image"}</em>
-                      <em>{sourceLabel(asset)}</em>
-                      <em>{formatDate(asset.created_at)}</em>
+        <section className="qc-gallery-stage">
+          {isLoading ? (
+            <div className="qc-gallery-grid qc-gallery-grid--loading" aria-label="Loading Gallery">
+              {Array.from({ length: 12 }, (_, index) => <span key={index} />)}
+            </div>
+          ) : null}
+
+          {!isLoading && errorText ? (
+            <div className="qc-gallery-empty" data-state="error">
+              <AlertCircle size={22} strokeWidth={1.8} aria-hidden="true" />
+              <strong>Gallery unavailable</strong>
+              <span>{errorText}</span>
+              <Button variant="secondary" onClick={() => loadAssets()}>Try again</Button>
+            </div>
+          ) : null}
+
+          {!isLoading && !errorText && !assets.length ? (
+            <div className="qc-gallery-empty">
+              <Image size={22} strokeWidth={1.8} aria-hidden="true" />
+              <strong>{hasActiveFilters ? "No matches" : "Gallery is empty"}</strong>
+              <span>{hasActiveFilters ? "Try a broader search or clear the filters." : "New generations will appear here automatically."}</span>
+              <Button variant="ghost" onClick={hasActiveFilters ? resetFilters : () => loadAssets()}>
+                {hasActiveFilters ? "Clear filters" : "Refresh"}
+              </Button>
+            </div>
+          ) : null}
+
+          {!errorText && assets.length ? (
+            <div className="qc-gallery-grid">
+              {assets.map((asset) => {
+                const selected = Boolean(asset.id && selectedIds.has(asset.id));
+                const active = activeId === asset.id;
+                const src = assetImage(asset);
+                return (
+                  <article
+                    className={`qc-gallery-card${active ? " is-active" : ""}${selected ? " is-selected" : ""}`}
+                    key={asset.id || asset.url}
+                  >
+                    <button
+                      className="qc-gallery-card__image"
+                      type="button"
+                      aria-label={`Inspect ${assetTitle(asset)}`}
+                      onClick={() => setActiveId(asset.id || "")}
+                      onDoubleClick={() => setPreview(asset)}
+                    >
+                      {src ? <img src={src} alt={assetTitle(asset)} loading="lazy" /> : <Image size={24} strokeWidth={1.8} aria-hidden="true" />}
+                    </button>
+                    <div className="qc-gallery-card__actions">
+                      <IconButton label={selected ? "Deselect asset" : "Select asset"} onClick={() => toggleSelected(asset)}>
+                        {selected ? <Check size={14} strokeWidth={2} aria-hidden="true" /> : <span className="qc-gallery-select-dot" />}
+                      </IconButton>
+                      <IconButton label={asset.favorite ? "Remove favorite" : "Favorite asset"} onClick={() => void toggleFavorite(asset)}>
+                        <Heart size={14} strokeWidth={2} aria-hidden="true" fill={asset.favorite ? "currentColor" : "none"} />
+                      </IconButton>
                     </div>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        ) : null}
+                    <button className="qc-gallery-card__body" type="button" onClick={() => setActiveId(asset.id || "")}>
+                      <p title={assetTitle(asset)}>{assetTitle(asset)}</p>
+                      <span>{sourceLabel(asset)} · {formatDate(asset.created_at)}</span>
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          ) : null}
+        </section>
 
-        <footer className="qc-gallery-pagination">
-          <Button variant="ghost" disabled={page <= 1 || isLoading} onClick={() => setPage((current) => Math.max(1, current - 1))}>
-            Previous
-          </Button>
-          <label className="qc-select-field">
-            <span>Page size</span>
-            <select value={pageSize} onChange={(event) => {
-              setPageSize(Number(event.target.value) || 36);
-              setPage(1);
-            }}>
-              {PAGE_SIZES.map((size) => (
-                <option key={size} value={size}>{size} / page</option>
-              ))}
-            </select>
-          </label>
-          <Button variant="ghost" disabled={page >= pages || isLoading} onClick={() => setPage((current) => Math.min(pages, current + 1))}>
-            Next
-          </Button>
-        </footer>
+        {!isLoading && !errorText && pages > 1 ? (
+          <footer className="qc-gallery-pagination">
+            <Button variant="ghost" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>
+              Previous
+            </Button>
+            <span>Page <strong>{page}</strong> of {pages}</span>
+            <label className="qc-gallery-page-size">
+              <span>Show</span>
+              <select value={pageSize} onChange={(event) => {
+                setPageSize(Number(event.target.value) || 36);
+                setPage(1);
+              }}>
+                {PAGE_SIZES.map((size) => (
+                  <option key={size} value={size}>{size} / page</option>
+                ))}
+              </select>
+            </label>
+            <Button variant="ghost" disabled={page >= pages} onClick={() => setPage((current) => Math.min(pages, current + 1))}>
+              Next
+            </Button>
+          </footer>
+        ) : null}
       </main>
 
-      <aside className="qc-gallery-detail" aria-label="Selected Gallery asset">
-        <div className="qc-gallery-detail__head">
-          <div>
-            <h2>{activeAsset ? assetTitle(activeAsset) : "Select an asset"}</h2>
-            <p>{activeAsset ? activeContext(activeAsset) : "Selected metadata appears here."}</p>
+      {activeAsset ? (
+        <aside className="qc-gallery-inspector" aria-label="Selected Gallery asset" role="dialog" aria-modal="false">
+          <div className="qc-gallery-inspector__head">
+            <div>
+              <span>Asset details</span>
+              <h2>{assetTitle(activeAsset)}</h2>
+            </div>
+            <IconButton label="Close asset details" onClick={() => setActiveId("")}>
+              <X size={17} strokeWidth={2} aria-hidden="true" />
+            </IconButton>
           </div>
-        </div>
-
-        {activeAsset ? (
-          <div className="qc-gallery-detail__body">
-            <button className="qc-gallery-detail__preview" type="button" onClick={() => setPreview(activeAsset)}>
-              {assetImage(activeAsset) ? <img src={assetImage(activeAsset)} alt={assetTitle(activeAsset)} /> : <Image size={24} strokeWidth={1.8} aria-hidden="true" />}
+          <div className="qc-gallery-inspector__body">
+            <button className="qc-gallery-inspector__preview" type="button" onClick={() => setPreview(activeAsset)}>
+              {assetImage(activeAsset)
+                ? <img src={assetImage(activeAsset)} alt={assetTitle(activeAsset)} />
+                : <Image size={24} strokeWidth={1.8} aria-hidden="true" />}
             </button>
-            <div className="qc-gallery-detail__actions">
+            <div className="qc-gallery-inspector__primary-actions">
+              <Button
+                variant="primary"
+                icon={<Send size={15} strokeWidth={2} aria-hidden="true" />}
+                onClick={() => sendSelectedToCanvas([activeAsset])}
+                disabled={!onSendAssetsToCanvas}
+              >
+                Send to Canvas
+              </Button>
+              <a className="qc-button qc-button--secondary" href={galleryDownloadUrl(activeAsset)} download>
+                <span className="qc-button__icon"><Download size={15} strokeWidth={2} aria-hidden="true" /></span>
+                <span>Download</span>
+              </a>
+            </div>
+            <div className="qc-gallery-inspector__utilities">
               <IconButton label="Preview asset" onClick={() => setPreview(activeAsset)}>
                 <Eye size={15} strokeWidth={2} aria-hidden="true" />
               </IconButton>
@@ -570,21 +622,15 @@ export function GalleryWorkspace({
               <IconButton label="Copy URL" onClick={() => copyUrl(activeAsset)}>
                 <ExternalLink size={15} strokeWidth={2} aria-hidden="true" />
               </IconButton>
-              <IconButton label="Send asset to Canvas" onClick={() => sendSelectedToCanvas([activeAsset])} disabled={!onSendAssetsToCanvas}>
-                <Send size={15} strokeWidth={2} aria-hidden="true" />
-              </IconButton>
               <a className="qc-icon-button" href={activeAsset.url || "#"} target="_blank" rel="noreferrer" aria-label="Open original" title="Open original">
                 <ExternalLink size={15} strokeWidth={2} aria-hidden="true" />
-              </a>
-              <a className="qc-icon-button" href={galleryDownloadUrl(activeAsset)} download aria-label="Download asset" title="Download asset">
-                <Download size={15} strokeWidth={2} aria-hidden="true" />
               </a>
               <IconButton label="Hide asset" onClick={() => void hideAsset(activeAsset)}>
                 <Trash2 size={15} strokeWidth={2} aria-hidden="true" />
               </IconButton>
             </div>
             <dl className="qc-gallery-meta">
-              <div><dt>Prompt</dt><dd>{assetPrompt(activeAsset) || "No prompt"}</dd></div>
+              <div className="qc-gallery-meta__prompt"><dt>Prompt</dt><dd>{assetPrompt(activeAsset) || "No prompt"}</dd></div>
               <div><dt>Source</dt><dd>{sourceLabel(activeAsset)}</dd></div>
               <div><dt>Artifact</dt><dd>{activeAsset.artifact_label || activeAsset.artifact_type || "Image"}</dd></div>
               <div><dt>Model</dt><dd>{activeAsset.model || "Unknown"}</dd></div>
@@ -594,14 +640,8 @@ export function GalleryWorkspace({
               <div><dt>Created</dt><dd>{formatDate(activeAsset.created_at)}</dd></div>
             </dl>
           </div>
-        ) : (
-          <div className="qc-results-empty qc-gallery-detail-empty">
-            <Image size={22} strokeWidth={1.8} aria-hidden="true" />
-            <strong>No asset selected</strong>
-            <span>Click an asset to inspect it here and in Creation Rail.</span>
-          </div>
-        )}
-      </aside>
+        </aside>
+      ) : null}
 
       {preview ? (
         <div className="qc-preview" role="dialog" aria-modal="true" aria-label="Gallery asset preview" onClick={() => setPreview(null)}>
