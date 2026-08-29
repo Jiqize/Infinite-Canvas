@@ -4759,6 +4759,8 @@ document.querySelectorAll('[data-tab]').forEach(btn => {
 refreshBtn?.addEventListener('click', () => loadAll().catch(err => setStatus(err.message || '加载失败')));
 storageSettingsBtn?.addEventListener('click', () => openStorageSettings().catch(err => setStatus(err.message || '打开偏好设置失败')));
 window.addEventListener('message', event => {
+    if(event.origin !== window.location.origin) return;
+    if(event.source !== window && event.source !== window.parent && event.source !== window.top) return;
     if(event.data?.type === 'studio-theme') window.StudioTheme?.apply?.(event.data.theme);
 });
 document.addEventListener('DOMContentLoaded', () => loadAll().catch(err => setStatus(err.message || '加载失败')));

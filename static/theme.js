@@ -33,6 +33,8 @@
 
     document.addEventListener('DOMContentLoaded', () => applyTheme(currentTheme()));
     window.addEventListener('message', event => {
+        if(event.origin !== window.location.origin) return;
+        if(event.source !== window && event.source !== window.parent && event.source !== window.top) return;
         if (event.data?.type === 'studio-theme') applyTheme(event.data.theme);
     });
     window.addEventListener('storage', event => {

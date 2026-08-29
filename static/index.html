@@ -24,7 +24,7 @@
         })();
     </script>
     <script src="/static/vendor/js/tailwindcss-cdn.js?v=2026.07.29.1785407265"></script>
-    <script src="/static/js/theme.js?v=2026.07.29.1785407265"></script>
+    <script src="/static/js/theme.js?v=2026.08.29.canvas-hybrid"></script>
     <script src="/static/js/i18n.js?v=2026.07.29.1785407265"></script>
     <style>
         @import url('/static/vendor/css/fonts.css?v=2026.07.29.1785407265');
@@ -1672,16 +1672,16 @@
         </script>
 
         <main class="stage">
-            <iframe id="frame-zimage" data-src="/static/zimage.html?v=2026.07.29.1785411295" class="active" scrolling="yes"></iframe>
-            <iframe id="frame-enhance" data-src="/static/enhance.html?v=2026.07.29.1785411295" scrolling="yes"></iframe>
-            <iframe id="frame-klein" data-src="/static/klein.html?v=2026.07.29.1785411295" scrolling="yes"></iframe>
-            <iframe id="frame-angle" data-src="/static/angle.html?v=2026.07.29.1785411295" scrolling="yes"></iframe>
-            <iframe id="frame-online" data-src="/static/online.html?v=2026.07.29.1785411295" scrolling="yes"></iframe>
-            <iframe id="frame-gpt-chat" data-src="/static/gpt-chat.html?v=2026.07.29.1785411295" scrolling="yes"></iframe>
-            <iframe id="frame-asset-manager" data-src="/static/asset-manager.html?v=2026.07.29.1785411295" scrolling="yes"></iframe>
-            <iframe id="frame-api-settings" data-src="/static/api-settings.html?v=2026.07.29.1785411295" scrolling="yes"></iframe>
-            <iframe id="frame-comfyui-settings" data-src="/static/comfyui-settings.html?v=2026.07.29.1785411295" scrolling="yes"></iframe>
-            <iframe id="frame-canvas" data-src="/static/canvas-list.html?v=2026.07.29.1785411295" scrolling="yes"></iframe>
+            <iframe id="frame-zimage" data-src="/static/zimage.html?v=2026.08.29.canvas-hybrid" class="active" scrolling="yes"></iframe>
+            <iframe id="frame-enhance" data-src="/static/enhance.html?v=2026.08.29.canvas-hybrid" scrolling="yes"></iframe>
+            <iframe id="frame-klein" data-src="/static/klein.html?v=2026.08.29.canvas-hybrid" scrolling="yes"></iframe>
+            <iframe id="frame-angle" data-src="/static/angle.html?v=2026.08.29.canvas-hybrid" scrolling="yes"></iframe>
+            <iframe id="frame-online" data-src="/static/online.html?v=2026.08.29.canvas-hybrid" scrolling="yes"></iframe>
+            <iframe id="frame-gpt-chat" data-src="/static/gpt-chat.html?v=2026.08.29.canvas-hybrid" scrolling="yes"></iframe>
+            <iframe id="frame-asset-manager" data-src="/static/asset-manager.html?v=2026.08.29.canvas-hybrid" scrolling="yes"></iframe>
+            <iframe id="frame-api-settings" data-src="/static/api-settings.html?v=2026.08.29.canvas-hybrid" scrolling="yes"></iframe>
+            <iframe id="frame-comfyui-settings" data-src="/static/comfyui-settings.html?v=2026.08.29.canvas-hybrid" scrolling="yes"></iframe>
+            <iframe id="frame-canvas" data-src="/static/canvas-list.html?v=2026.08.29.canvas-hybrid" scrolling="yes"></iframe>
 
         </main>
     </div>
@@ -1906,7 +1906,7 @@
             }
             // 切换到画布时通知刷新工作流列表（防止在 comfyui-settings 修改后画布未及时更新）
             if (id === 'canvas' && target.src) {
-                try { target.contentWindow?.postMessage({ type: 'canvas-focus' }, '*'); } catch(e) {}
+                try { target.contentWindow?.postMessage({ type: 'canvas-focus' }, location.origin); } catch(e) {}
             }
             resetStudioRootScroll();
         }
@@ -1915,13 +1915,16 @@
             if(!data || !['providers-changed','workflows-changed','comfy-instances-changed'].includes(data.type)) return;
             document.querySelectorAll('iframe').forEach(iframe => {
                 try {
-                    if (iframe && iframe.contentWindow) iframe.contentWindow.postMessage(data, '*');
+                    if (iframe && iframe.contentWindow) iframe.contentWindow.postMessage(data, location.origin);
                 } catch(e) {}
             });
         }
 
         window.addEventListener('message', event => {
-            if (event.origin && event.origin !== location.origin) return;
+            if (event.origin !== location.origin) return;
+            const knownSource = event.source === window
+                || [...document.querySelectorAll('iframe')].some(frame => frame.contentWindow === event.source);
+            if(!knownSource) return;
             forwardStudioApiChange(event.data);
         });
 
@@ -1974,16 +1977,16 @@
                 } else if (data.type === 'cloud_status') {
                     const iframe = document.querySelector('iframe.active');
                     if (iframe && iframe.contentWindow) {
-                        iframe.contentWindow.postMessage(data, '*');
+                        iframe.contentWindow.postMessage(data, location.origin);
                     }
                 } else if (data.type === 'canvas_updated') {
                     const iframe = document.querySelector('iframe.active');
                     if (iframe && iframe.contentWindow) {
-                        iframe.contentWindow.postMessage(data, '*');
+                        iframe.contentWindow.postMessage(data, location.origin);
                     }
                 } else if (data.type === 'asset_library_updated') {
                     document.querySelectorAll('iframe').forEach(iframe => {
-                        if (iframe && iframe.contentWindow) iframe.contentWindow.postMessage(data, '*');
+                        if (iframe && iframe.contentWindow) iframe.contentWindow.postMessage(data, location.origin);
                     });
                 }
             };
@@ -1996,7 +1999,7 @@
             const theme = (window.StudioTheme || {get: () => 'light'}).get();
             try {
                 if (iframe && iframe.contentWindow) {
-                    iframe.contentWindow.postMessage({ type: 'studio-theme', theme }, '*');
+                    iframe.contentWindow.postMessage({ type: 'studio-theme', theme }, location.origin);
                 }
             } catch (e) {}
         }
@@ -2007,14 +2010,14 @@
             const scale = Number.isFinite(cssScale) && cssScale > 0 ? cssScale : ((window.StudioScale || {getScale: () => 1}).getScale());
             try {
                 if (iframe && iframe.contentWindow) {
-                    iframe.contentWindow.postMessage({ type: 'studio-ui-scale', mode, scale }, '*');
+                    iframe.contentWindow.postMessage({ type: 'studio-ui-scale', mode, scale }, location.origin);
                 }
             } catch (e) {}
         }
 
         function pauseScaleInFrame(frame, duration = 650) {
             try {
-                frame?.contentWindow?.postMessage({ type:'studio-ui-scale-pause', duration }, '*');
+                frame?.contentWindow?.postMessage({ type:'studio-ui-scale-pause', duration }, location.origin);
             } catch(e) {}
         }
 
@@ -2071,14 +2074,14 @@
         function syncLanguageToFrame(frame) {
             if(!window.StudioI18n) return;
             try {
-                frame.contentWindow?.postMessage({ type:'studio-lang', lang:window.StudioI18n.lang() }, '*');
+                frame.contentWindow?.postMessage({ type:'studio-lang', lang:window.StudioI18n.lang() }, location.origin);
             } catch(e) {}
         }
 
         function broadcastLanguage() {
             document.querySelectorAll('iframe').forEach(frame => {
                 try {
-                    frame.contentWindow?.postMessage({ type:'studio-lang', lang:window.StudioI18n.lang() }, '*');
+                    frame.contentWindow?.postMessage({ type:'studio-lang', lang:window.StudioI18n.lang() }, location.origin);
                 } catch(e) {}
             });
         }

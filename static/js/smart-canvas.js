@@ -6003,8 +6003,9 @@ async function loadCanvas(){
     if(!canvasId) return;
     try {
         const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}`);
-        if(!res.ok) return;
+        if(!res.ok) throw new Error(await responseErrorMessage(res, tr('smart.toastCanvasFail')));
         const data = await res.json();
+        if(!data?.canvas) throw new Error(tr('smart.toastCanvasFail'));
         canvas = data.canvas;
         rememberCanvasListProject(canvas.project || 'default');
         canvasUsesConnections = Object.prototype.hasOwnProperty.call(canvas || {}, 'connections');
@@ -6048,7 +6049,15 @@ async function loadCanvas(){
         resumeJimengPendingNodes();
         startCanvasMetaPoll();
         await consumeSmartCanvasIntake();
-    } catch(e) { toast(tr('smart.toastCanvasFail')); }
+    } catch(e) {
+        const detail = e?.message || tr('smart.toastCanvasFail');
+        const current = smartCanvasIntakeApi()?.readQueue();
+        if(current?.ok && current.queue?.batches?.length){
+            const batchIds = current.queue.batches.map(batch => batch.id);
+            smartCanvasIntakeMessage('failed', batchIds, smartCanvasIntakeApi().countItems(current.queue), detail);
+        }
+        toast(detail);
+    }
 }
 function scheduleSave(){
     clearTimeout(saveTimer);

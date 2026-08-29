@@ -108,6 +108,13 @@ export function normalizeCanvasIntakeItems(items: CanvasIntakeItem[]): CanvasInt
   return (Array.isArray(items) ? items : []).map(normalizeItem).filter((item): item is CanvasIntakeItem => Boolean(item));
 }
 
+function normalizeStoredItems(value: unknown, label: string): CanvasIntakeItem[] {
+  if (!Array.isArray(value)) throw new Error(`${label} items must be an array.`);
+  const items = value.map(normalizeItem);
+  if (items.some((item) => !item)) throw new Error(`${label} contains an invalid item.`);
+  return items as CanvasIntakeItem[];
+}
+
 function stableBatchId(createdAt: number, items: CanvasIntakeItem[]): string {
   return `legacy-${hashText(`${Number(createdAt) || 0}|${JSON.stringify(items)}`)}`;
 }
@@ -125,9 +132,20 @@ function normalizeBatch(value: unknown, index = 0): CanvasIntakeBatchV1 {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Batch ${index + 1} is invalid.`);
   const input = value as Partial<CanvasIntakeBatchV1>;
   const createdAt = Number(input.created_at) || 0;
-  const items = normalizeCanvasIntakeItems(Array.isArray(input.items) ? input.items : []);
-  const id = String(input.id || "").trim() || stableBatchId(createdAt, items);
+  const items = normalizeStoredItems(input.items, `Batch ${index + 1}`);
+  const id = String(input.id || "").trim();
+  if (!id) throw new Error(`Batch ${index + 1} is missing an id.`);
   return { id, created_at: createdAt, items };
+}
+
+function normalizeQueue(value: unknown): CanvasIntakeQueueV1 {
+  if (!value || typeof value !== "object" || !Array.isArray((value as Partial<CanvasIntakeQueueV1>).batches)) {
+    throw new Error("batches must be an array");
+  }
+  const batches = (value as Partial<CanvasIntakeQueueV1>).batches!.map(normalizeBatch);
+  const ids = batches.map((batch) => batch.id);
+  if (new Set(ids).size !== ids.length) throw new Error("batch ids must be unique");
+  return { version: 1, batches };
 }
 
 export function countCanvasIntakeItems(queue: CanvasIntakeQueueV1): number {
@@ -147,10 +165,10 @@ export function readCanvasIntakeQueue(): CanvasIntakeReadResult {
     let queue: CanvasIntakeQueueV1;
     let migrated = false;
     if (parsed.version === 1 && Array.isArray(parsed.batches)) {
-      queue = { version: 1, batches: parsed.batches.map(normalizeBatch) };
+      queue = normalizeQueue(parsed);
     } else if (Array.isArray(parsed.items)) {
       const createdAt = Number(parsed.created_at) || 0;
-      const items = normalizeCanvasIntakeItems(parsed.items);
+      const items = normalizeStoredItems(parsed.items, "Legacy Canvas intake");
       queue = { version: 1, batches: items.length ? [{ id: stableBatchId(createdAt, items), created_at: createdAt, items }] : [] };
       migrated = true;
     } else {
@@ -170,7 +188,12 @@ export function readCanvasIntakeQueue(): CanvasIntakeReadResult {
 }
 
 function saveCanvasIntakeQueue(queue: CanvasIntakeQueueV1): { ok: boolean; queue: CanvasIntakeQueueV1; error: string } {
-  const normalized: CanvasIntakeQueueV1 = { version: 1, batches: (queue.batches || []).map(normalizeBatch) };
+  let normalized: CanvasIntakeQueueV1;
+  try {
+    normalized = normalizeQueue(queue);
+  } catch (error) {
+    return { ok: false, queue: emptyQueue(), error: `Unable to save Canvas intake: ${error instanceof Error ? error.message : String(error)}` };
+  }
   if (countCanvasIntakeItems(normalized) > CANVAS_INTAKE_MAX_ITEMS) {
     return { ok: false, queue: normalized, error: `Canvas intake cannot exceed ${CANVAS_INTAKE_MAX_ITEMS} items.` };
   }

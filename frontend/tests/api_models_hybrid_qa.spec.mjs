@@ -20,9 +20,9 @@ function richProvider(overrides = {}) {
     video_models: ["veo-3"],
     model_names: { "gemini-image": "Gemini Image" },
     model_protocols: { "gemini-image": "gemini" },
-    ms_loras: [{ model_id: "fashion/lora", weight: 0.75 }],
+    ms_loras: [{ id: "fashion/lora", name: "Fashion LoRA", target_model: "gemini-image", strength: 0.75, enabled: true, note: "keep" }],
     ms_defaults_version: 7,
-    rh_apps: [{ webappId: "rh-app-1", title: "App One" }],
+    rh_apps: [{ appId: "rh-app-1", title: "App One" }],
     rh_workflows: [{ workflowId: "rh-flow-1", title: "Flow One" }],
     volcengine_project_name: "project-preserved",
     volcengine_region: "cn-beijing",
@@ -86,7 +86,7 @@ test("React keeps provider protocol and advanced fields on a common-field save",
   expect(await page.getByLabel("Image request mode").locator("option").evaluateAll((options) => options.map((option) => option.value))).toEqual([
     "openai", "openai-json", "openai-video-proxy", "openai-responses", "tudou-async"
   ]);
-  await page.getByLabel("Name").fill("Gemini Renamed");
+  await page.getByLabel("Name", { exact: true }).fill("Gemini Renamed");
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByLabel("Provider diagnostics").getByText("Saved", { exact: true })).toBeVisible();
 
@@ -97,9 +97,9 @@ test("React keeps provider protocol and advanced fields on a common-field save",
     image_request_mode: "openai-responses",
     model_names: { "gemini-image": "Gemini Image" },
     model_protocols: { "gemini-image": "gemini" },
-    ms_loras: [{ model_id: "fashion/lora", weight: 0.75 }],
+    ms_loras: [{ id: "fashion/lora", name: "Fashion LoRA", target_model: "gemini-image", strength: 0.75, enabled: true, note: "keep" }],
     ms_defaults_version: 7,
-    rh_apps: [{ webappId: "rh-app-1", title: "App One" }],
+    rh_apps: [{ appId: "rh-app-1", title: "App One" }],
     rh_workflows: [{ workflowId: "rh-flow-1", title: "Flow One" }],
     volcengine_project_name: "project-preserved",
     volcengine_region: "cn-beijing"
@@ -114,7 +114,7 @@ test("legacy Tudou protocol remains visible and round-trips without becoming sel
 
   await expect(page.getByLabel("Protocol")).toHaveValue("tudou");
   expect(await page.getByLabel("Protocol").locator('option[value="tudou"]').evaluate((option) => option.disabled)).toBe(true);
-  await page.getByLabel("Name").fill("Legacy Tudou Renamed");
+  await page.getByLabel("Name", { exact: true }).fill("Legacy Tudou Renamed");
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => savedPayload).not.toBeNull();
   expect(savedPayload[0].protocol).toBe("tudou");

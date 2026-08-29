@@ -1102,7 +1102,7 @@ document.addEventListener('keydown', e => {
 // language switch from parent (index.html) via postMessage
 window.addEventListener('message', event => {
     if(event.origin !== location.origin) return;
-    if(window.parent !== window && event.source !== window.parent && event.source !== window.top) return;
+    if(event.source !== window && event.source !== window.parent && event.source !== window.top) return;
     if(event.data?.type === 'studio-lang'){
         if(event.data.lang && window.StudioI18n) StudioI18n.set(event.data.lang);
         window.StudioI18n?.apply?.();

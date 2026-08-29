@@ -1464,6 +1464,80 @@ function serializableCanvasNode(node){
 function serializableCanvasNodes(list=nodes){
     return (list || []).map(serializableCanvasNode);
 }
+function classicMergeItemKey(item, index=0){
+    const url = outputUrlValue(item);
+    if(url) return `url:${url}`;
+    const id = String(item?.id || '').trim();
+    if(id) return `id:${id}`;
+    try { return `json:${JSON.stringify(item)}`; } catch(e) { return `index:${index}`; }
+}
+function mergeClassicArray(localItems, remoteItems, keyForItem=classicMergeItemKey){
+    const merged = [];
+    const seen = new Set();
+    [...(Array.isArray(localItems) ? localItems : []), ...(Array.isArray(remoteItems) ? remoteItems : [])].forEach((item, index) => {
+        const key = keyForItem(item, index);
+        if(seen.has(key)) return;
+        seen.add(key);
+        merged.push(item);
+    });
+    return merged;
+}
+function mergeClassicNode(local, remote){
+    if(!local) return remote;
+    if(!remote) return local;
+    const merged = {...remote, ...local};
+    ['images', 'generatedOutputs', 'materials', '_pending', 'items'].forEach(key => {
+        if(Array.isArray(local[key]) || Array.isArray(remote[key])){
+            merged[key] = mergeClassicArray(local[key], remote[key]);
+        }
+    });
+    if(local.imageComparisons || remote.imageComparisons){
+        merged.imageComparisons = {...(remote.imageComparisons || {}), ...(local.imageComparisons || {})};
+    }
+    return merged;
+}
+function mergeClassicConflictCanvas(remote){
+    if(!remote || !canvas) return false;
+    const localById = new Map((nodes || []).filter(Boolean).map(node => [node.id, node]));
+    const remoteNodes = Array.isArray(remote.nodes) ? remote.nodes.filter(Boolean) : [];
+    const remoteById = new Map(remoteNodes.map(node => [node.id, node]));
+    const orderedIds = [];
+    const seenIds = new Set();
+    [...(nodes || []), ...remoteNodes].forEach(node => {
+        if(!node?.id || seenIds.has(node.id)) return;
+        seenIds.add(node.id);
+        orderedIds.push(node.id);
+    });
+    nodes = orderedIds.map(id => mergeClassicNode(localById.get(id), remoteById.get(id))).filter(Boolean);
+    const nodeIds = new Set(nodes.map(node => node.id));
+    connections = mergeClassicArray(connections, remote.connections, connection => {
+        if(!connection) return 'invalid';
+        return `${connection.from || ''}->${connection.to || ''}:${connection.kind || 'flow'}`;
+    }).filter(connection => connection && nodeIds.has(connection.from) && nodeIds.has(connection.to));
+    const logs = mergeClassicArray(canvas.logs, remote.logs, (entry, index) => {
+        const id = String(entry?.id || entry?.task_id || '').trim();
+        if(id) return `id:${id}`;
+        try { return `json:${JSON.stringify(entry)}`; } catch(e) { return `index:${index}`; }
+    });
+    const localViewport = {...viewport};
+    canvas = {
+        ...remote,
+        ...canvas,
+        nodes,
+        connections,
+        logs,
+        viewport:localViewport,
+        updated_at:Number(remote.updated_at || canvas.updated_at || 0)
+    };
+    viewport = localViewport;
+    lastCanvasUpdatedAt = Number(canvas.updated_at || lastCanvasUpdatedAt || 0);
+    sanitizeConnections();
+    canvas.connections = connections;
+    selected = new Set([...selected].filter(id => nodeIds.has(id)));
+    renderCanvasList();
+    render();
+    return true;
+}
 async function saveCanvas(){
     if(!canvas || applyingRemoteCanvas) return;
     if(savingCanvasNow){
@@ -1492,7 +1566,8 @@ async function saveCanvas(){
             const data = await res.json().catch(() => ({}));
             const remote = data.detail?.canvas || data.canvas;
             if(localCanvasDirty || saveCanvasAgain){
-                lastCanvasUpdatedAt = Number(data.detail?.updated_at || data.updated_at || remote?.updated_at || lastCanvasUpdatedAt || 0);
+                if(remote) mergeClassicConflictCanvas(remote);
+                else lastCanvasUpdatedAt = Number(data.detail?.updated_at || data.updated_at || lastCanvasUpdatedAt || 0);
                 saveCanvasAgain = true;
                 setStatus('Saving...');
                 return;

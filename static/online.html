@@ -18,7 +18,7 @@
     </script>
     <script src="/static/vendor/js/tailwindcss-cdn.js?v=2026.07.29.1785407265"></script>
     <script src="/static/vendor/js/lucide.js?v=2026.07.29.1785407265"></script>
-    <script src="/static/js/theme.js?v=2026.07.29.1785407265"></script>
+    <script src="/static/js/theme.js?v=2026.08.29.canvas-hybrid"></script>
     <script src="/static/js/i18n.js?v=2026.07.29.1785407265"></script>
     <script src="/static/js/image-preview.js?v=2026.07.29.1785407265"></script>
     <script src="/static/js/history-bulk-manager.js?v=2026.07.29.1785407265"></script>
@@ -243,6 +243,8 @@
             if(loader && !isLoading) loader.innerText = tr('online.loadMore');
         }
         window.addEventListener('message', event => {
+            if(event.origin !== window.location.origin) return;
+            if(event.source !== window && event.source !== window.parent && event.source !== window.top) return;
             if(event.data?.type === 'studio-lang') applyLanguage(event.data.lang);
             // API 设置页通过 postMessage 通知平台/模型变更（iframe 内嵌场景）
             if(event.data?.type === 'providers-changed' || event.data?.type === 'workflows-changed') scheduleProviderRefresh();

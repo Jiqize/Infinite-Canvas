@@ -44,6 +44,13 @@
         return (Array.isArray(values) ? values : []).map(normalizeItem).filter(Boolean);
     }
 
+    function normalizeStoredItems(values, label){
+        if(!Array.isArray(values)) throw new Error(`${label} 的 items 必须是数组`);
+        const items = values.map(normalizeItem);
+        if(items.some(item => !item)) throw new Error(`${label} 包含无效素材`);
+        return items;
+    }
+
     function stableBatchId(createdAt, items){
         return `legacy-${hashText(`${Number(createdAt) || 0}|${JSON.stringify(items)}`)}`;
     }
@@ -58,9 +65,18 @@
     function normalizeBatch(value, index=0){
         if(!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`批次 ${index + 1} 无效`);
         const createdAt = Number(value.created_at) || 0;
-        const items = normalizeItems(value.items);
-        const id = String(value.id || '').trim() || stableBatchId(createdAt, items);
+        const items = normalizeStoredItems(value.items, `批次 ${index + 1}`);
+        const id = String(value.id || '').trim();
+        if(!id) throw new Error(`批次 ${index + 1} 缺少 id`);
         return {id, created_at:createdAt, items};
+    }
+
+    function normalizeQueue(value){
+        if(!value || !Array.isArray(value.batches)) throw new Error('待放置素材 batches 必须是数组');
+        const batches = value.batches.map(normalizeBatch);
+        const ids = batches.map(batch => batch.id);
+        if(new Set(ids).size !== ids.length) throw new Error('待放置素材包含重复批次 id');
+        return {version:QUEUE_VERSION, batches};
     }
 
     function totalItems(queue){
@@ -80,10 +96,10 @@
             let queue;
             let migrated = false;
             if(parsed?.version === QUEUE_VERSION && Array.isArray(parsed.batches)){
-                queue = {version:QUEUE_VERSION, batches:parsed.batches.map(normalizeBatch)};
+                queue = normalizeQueue(parsed);
             } else if(parsed && Array.isArray(parsed.items)) {
                 const createdAt = Number(parsed.created_at) || 0;
-                const items = normalizeItems(parsed.items);
+                const items = normalizeStoredItems(parsed.items, '旧版待放置素材');
                 queue = {version:QUEUE_VERSION, batches:items.length ? [{id:stableBatchId(createdAt, items), created_at:createdAt, items}] : []};
                 migrated = true;
             } else {
@@ -98,10 +114,12 @@
     }
 
     function writeQueue(queue){
-        const normalized = {
-            version:QUEUE_VERSION,
-            batches:(queue?.batches || []).map(normalizeBatch)
-        };
+        let normalized;
+        try {
+            normalized = normalizeQueue(queue);
+        } catch(error) {
+            return {ok:false, queue:emptyQueue(), error:`无法保存待放置素材：${error?.message || error}`};
+        }
         if(totalItems(normalized) > MAX_ITEMS){
             return {ok:false, queue:normalized, error:`待放置素材总数不能超过 ${MAX_ITEMS} 项`};
         }

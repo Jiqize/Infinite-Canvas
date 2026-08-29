@@ -1364,42 +1364,56 @@ def default_runninghub_static_provider():
     }
 
 def mutate_static_runninghub_provider(mutator):
-    os.makedirs(STATIC_RUNNINGHUB_DIR, exist_ok=True)
-    raw = []
-    if os.path.exists(STATIC_RUNNINGHUB_API_PROVIDERS_FILE):
-        try:
-            with open(STATIC_RUNNINGHUB_API_PROVIDERS_FILE, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-        except Exception as exc:
-            print(f"读取 static RunningHub 模板失败，将重建基础模板: {exc}")
-            raw = []
-    if isinstance(raw, dict) and str(raw.get("id") or "").strip().lower() == "runninghub":
-        provider = raw
-    else:
-        if isinstance(raw, list):
-            providers = raw
-        elif isinstance(raw, dict):
-            providers = raw.setdefault("providers", [])
-            if not isinstance(providers, list):
-                providers = []
-                raw["providers"] = providers
+    with RUNNINGHUB_WORKFLOW_LOCK:
+        os.makedirs(STATIC_RUNNINGHUB_DIR, exist_ok=True)
+        raw = []
+        if os.path.exists(STATIC_RUNNINGHUB_API_PROVIDERS_FILE):
+            try:
+                with open(STATIC_RUNNINGHUB_API_PROVIDERS_FILE, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+            except Exception as exc:
+                print(f"读取 static RunningHub 模板失败，将重建基础模板: {exc}")
+                raw = []
+        if isinstance(raw, dict) and str(raw.get("id") or "").strip().lower() == "runninghub":
+            provider = raw
         else:
-            raw = []
-            providers = raw
-        provider = next((
-            item for item in providers
-            if isinstance(item, dict) and str(item.get("id") or "").strip().lower() == "runninghub"
-        ), None)
-        if provider is None:
-            provider = default_runninghub_static_provider()
-            providers.append(provider)
-    changed = mutator(provider)
-    if changed is False:
-        return False
-    with open(STATIC_RUNNINGHUB_API_PROVIDERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(raw, f, ensure_ascii=False, indent=2)
-        f.write("\n")
-    return True
+            if isinstance(raw, list):
+                providers = raw
+            elif isinstance(raw, dict):
+                providers = raw.setdefault("providers", [])
+                if not isinstance(providers, list):
+                    providers = []
+                    raw["providers"] = providers
+            else:
+                raw = []
+                providers = raw
+            provider = next((
+                item for item in providers
+                if isinstance(item, dict) and str(item.get("id") or "").strip().lower() == "runninghub"
+            ), None)
+            if provider is None:
+                provider = default_runninghub_static_provider()
+                providers.append(provider)
+        changed = mutator(provider)
+        if changed is False:
+            return False
+        fd, temp_path = tempfile.mkstemp(
+            prefix=".api-providers-",
+            suffix=".tmp",
+            dir=STATIC_RUNNINGHUB_DIR,
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(raw, f, ensure_ascii=False, indent=2)
+                f.write("\n")
+            os.replace(temp_path, STATIC_RUNNINGHUB_API_PROVIDERS_FILE)
+        except Exception:
+            try:
+                os.unlink(temp_path)
+            except FileNotFoundError:
+                pass
+            raise
+        return True
 
 def sync_runninghub_provider_workflows_to_static_template(provider):
     if not isinstance(provider, dict) or str(provider.get("id") or "").strip().lower() != "runninghub":

@@ -161,7 +161,9 @@ async function seedIntake(page, queue = intakeQueue()) {
 async function mockCanvasConsumerApis(page, {
   kind = "classic",
   canvasOverride = null,
-  putStatuses = [200]
+  putStatuses = [200],
+  conflictCanvas = null,
+  getStatus = 200
 } = {}) {
   const captured = { puts: [], metaCalls: 0 };
   const baseCanvas = canvasOverride || {
@@ -195,6 +197,7 @@ async function mockCanvasConsumerApis(page, {
       return route.fulfill({ json: { id: "qa-canvas", updated_at: 1 } });
     }
     if (path === "/api/canvases/qa-canvas" && request.method() === "GET") {
+      if (getStatus >= 400) return route.fulfill({ status: getStatus, json: { detail: `mock load ${getStatus}` } });
       return route.fulfill({ json: { canvas: structuredClone(baseCanvas) } });
     }
     if (path === "/api/canvases/qa-canvas" && request.method() === "PUT") {
@@ -204,7 +207,7 @@ async function mockCanvasConsumerApis(page, {
       if (status === 409) {
         return route.fulfill({
           status: 409,
-          json: { detail: { canvas: { ...baseCanvas, updated_at: 2 }, updated_at: 2 } }
+          json: { detail: { canvas: { ...(conflictCanvas || baseCanvas), updated_at: 2 }, updated_at: 2 } }
         });
       }
       if (status >= 400) return route.fulfill({ status, json: { detail: `mock save ${status}` } });
@@ -312,6 +315,68 @@ test("advanced settings and legacy Chat expose the new request fields", async ({
   }))).toEqual({ aspectRatio: "function", resolution: "function" });
 });
 
+test("legacy advanced settings preserves every unedited provider field", async ({ page }) => {
+  const provider = {
+    id: "gemini-main",
+    name: "Gemini Main",
+    base_url: "https://generativelanguage.googleapis.com",
+    protocol: "gemini",
+    image_request_mode: "openai-responses",
+    image_edit_route: "general",
+    image_generation_endpoint: "/v1beta/images:generate",
+    image_edit_endpoint: "/v1beta/images:edit",
+    enabled: true,
+    primary: true,
+    image_models: ["gemini-image"],
+    chat_models: ["gemini-chat"],
+    video_models: ["veo-3"],
+    model_names: { "gemini-image": "Gemini Image", "future-model": "Future Model" },
+    model_protocols: { "gemini-image": "gemini" },
+    ms_loras: [{ id: "lora-a", name: "LoRA A", target_model: "gemini-image", strength: 0.8, enabled: true, note: "keep" }],
+    ms_defaults_version: 7,
+    rh_apps: [{ appId: "app-a", title: "App A" }],
+    rh_workflows: [{ workflowId: "flow-a", title: "Flow A" }],
+    volcengine_project_name: "project-preserved",
+    volcengine_region: "cn-beijing",
+    has_key: true,
+    key_preview: "saved"
+  };
+  let savedPayload = null;
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/providers" && request.method() === "GET") {
+      return route.fulfill({ json: { providers: [structuredClone(provider)] } });
+    }
+    if (path === "/api/providers" && request.method() === "PUT") {
+      savedPayload = request.postDataJSON();
+      return route.fulfill({ json: { providers: savedPayload } });
+    }
+    return route.fulfill({ json: {} });
+  });
+  await page.goto(`${BASE}/static/api-settings.html`, { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#nameInput")).toHaveValue("Gemini Main");
+  await page.evaluate(() => { window.saveProviders(); });
+  await expect.poll(() => savedPayload).not.toBeNull();
+
+  expect(savedPayload[0]).toMatchObject({
+    id: "gemini-main",
+    protocol: "gemini",
+    image_request_mode: "openai-responses",
+    image_generation_endpoint: "/v1beta/images:generate",
+    image_edit_endpoint: "/v1beta/images:edit",
+    primary: true,
+    model_names: { "gemini-image": "Gemini Image", "future-model": "Future Model" },
+    model_protocols: { "gemini-image": "gemini" },
+    ms_loras: [{ id: "lora-a", target_model: "gemini-image", strength: 0.8, note: "keep" }],
+    ms_defaults_version: 7,
+    volcengine_project_name: "project-preserved",
+    volcengine_region: "cn-beijing"
+  });
+  expect(savedPayload[0].rh_apps[0]).toMatchObject({ appId: "app-a", title: "App A" });
+  expect(savedPayload[0].rh_workflows[0]).toMatchObject({ workflowId: "flow-a", title: "Flow A" });
+});
+
 test("shared intake appends batches, rejects overflow atomically, and migrates legacy data stably", async ({ page }) => {
   await mockCanvasListApis(page);
   await page.goto(`${BASE}/static/canvas-list.html`, { waitUntil: "domcontentloaded" });
@@ -396,6 +461,26 @@ test("React intake writer uses the same append-only queue contract", async ({ pa
   expect(result).toEqual({ firstOk: true, secondOk: true, batchCount: 2, itemCount: 3 });
 });
 
+test("React intake reader preserves malformed V1 storage", async ({ page }) => {
+  await mockReactGalleryApis(page);
+  await page.goto(`${VITE_BASE}/app/gallery`, { waitUntil: "domcontentloaded" });
+  const result = await page.evaluate(async () => {
+    const intake = await import("/app/src/lib/canvas-intake.ts");
+    const raw = JSON.stringify({
+      version: 1,
+      batches: [
+        { id: "duplicate", created_at: 1, items: [{ url: "https://example.test/a.png" }] },
+        { id: "duplicate", created_at: 2, items: [{ url: "https://example.test/b.png" }] }
+      ]
+    });
+    localStorage.setItem(intake.CANVAS_INTAKE_STORAGE_KEY, raw);
+    const read = intake.readCanvasIntakeQueue();
+    return { ok: read.ok, raw, after: localStorage.getItem(intake.CANVAS_INTAKE_STORAGE_KEY) };
+  });
+  expect(result.ok).toBe(false);
+  expect(result.after).toBe(result.raw);
+});
+
 test("Canvas List preserves corrupt intake until explicit cancel", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("qcos_canvas_intake_items", "{broken-json");
@@ -410,6 +495,26 @@ test("Canvas List preserves corrupt intake until explicit cancel", async ({ page
   await page.getByRole("button", { name: /清空待放置素材|Clear pending assets/i }).click();
   expect(await page.evaluate(() => localStorage.getItem("qcos_canvas_intake_items"))).toBeNull();
   expect(await page.evaluate(() => window.__intakeStatuses.at(-1)?.status)).toBe("cancelled");
+});
+
+test("shared intake rejects structurally corrupt V1 queues without rewriting them", async ({ page }) => {
+  await mockCanvasListApis(page);
+  await page.goto(`${BASE}/static/canvas-list.html`, { waitUntil: "domcontentloaded" });
+  const malformedQueues = [
+    { version: 1, batches: [{ id: "", created_at: 1, items: [{ url: "https://example.test/a.png" }] }] },
+    { version: 1, batches: [{ id: "same", created_at: 1, items: [{ url: "https://example.test/a.png" }] }, { id: "same", created_at: 2, items: [{ url: "https://example.test/b.png" }] }] },
+    { version: 1, batches: [{ id: "bad-item", created_at: 1, items: [{ title: "missing URL" }] }] }
+  ];
+  for (const malformed of malformedQueues) {
+    const result = await page.evaluate((value) => {
+      const raw = JSON.stringify(value);
+      localStorage.setItem("qcos_canvas_intake_items", raw);
+      const read = window.QCOSCanvasIntake.readQueue();
+      return { ok: read.ok, raw, after: localStorage.getItem("qcos_canvas_intake_items") };
+    }, malformed);
+    expect(result.ok).toBe(false);
+    expect(result.after).toBe(result.raw);
+  }
 });
 
 test("Canvas List keeps intake through refresh and target selection", async ({ page }) => {
@@ -530,7 +635,17 @@ for (const kind of ["classic", "smart"]) {
 
   test(`${kind} Canvas retries a 409 without duplicating intake nodes`, async ({ page }) => {
     await seedIntake(page);
-    const captured = await mockCanvasConsumerApis(page, { kind, putStatuses: [409, 200] });
+    const remoteNode = kind === "smart"
+      ? { id: "remote-only", type: "smart-image", x: 800, y: 120, title: "Remote", images: [{ url: "https://example.test/remote.png" }] }
+      : { id: "remote-only", type: "image", x: 800, y: 120, title: "Remote", url: "https://example.test/remote.png" };
+    const captured = await mockCanvasConsumerApis(page, {
+      kind,
+      putStatuses: [409, 200],
+      conflictCanvas: {
+        id: "qa-canvas", title: "Remote Canvas", kind, project: "default",
+        nodes: [remoteNode], connections: [], viewport: { x: 0, y: 0, scale: 1 }, settings: {}, logs: [], updated_at: 2
+      }
+    });
     const filename = kind === "smart" ? "smart-canvas.html" : "canvas.html";
     await page.goto(`${BASE}/static/${filename}?id=qa-canvas`, { waitUntil: "domcontentloaded" });
 
@@ -539,8 +654,20 @@ for (const kind of ["classic", "smart"]) {
     const lastNodes = captured.puts.at(-1).nodes.filter((node) => node.qcos_intake_batch_id === "batch-consumer");
     expect(lastNodes).toHaveLength(2);
     expect(new Set(lastNodes.map((node) => node.qcos_intake_item_id)).size).toBe(2);
+    expect(captured.puts.at(-1).nodes.some((node) => node.id === "remote-only")).toBe(true);
   });
 }
+
+test("Smart Canvas exposes a load failure and retains queued intake", async ({ page }) => {
+  await seedIntake(page, intakeQueue("batch-load-failure"));
+  const captured = await mockCanvasConsumerApis(page, { kind: "smart", getStatus: 500 });
+  await page.goto(`${BASE}/static/smart-canvas.html?id=qa-canvas`, { waitUntil: "domcontentloaded" });
+
+  await expect(page.locator("#toast.show")).toContainText(/mock load 500|加载|load/i);
+  expect(captured.puts).toHaveLength(0);
+  expect(await page.evaluate(() => localStorage.getItem("qcos_canvas_intake_items"))).not.toBeNull();
+  expect(await page.evaluate(() => window.__intakeStatuses.at(-1)?.status)).toBe("failed");
+});
 
 test("saved intake markers clear a replayed batch without inserting or saving again", async ({ page }) => {
   const queue = intakeQueue("batch-replayed");

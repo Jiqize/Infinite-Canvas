@@ -824,8 +824,6 @@ function syncEditor(){
             ? 'general'
             : (imageEditRouteInput?.value || item.image_edit_route)
     );
-    item.image_generation_endpoint = '';
-    item.image_edit_endpoint = '';
     item.rh_apps = normalizeRhEntries(item.rh_apps || [], 'app');
     item.rh_workflows = normalizeRhEntries(item.rh_workflows || [], 'workflow');
     const key = keyInput.value.trim();
@@ -3793,19 +3791,11 @@ async function saveProviders(){
             item.chat_models = unique(item.chat_models || []);
             item.video_models = unique(item.video_models || []);
         }
-        item.image_generation_endpoint = '';
-        item.image_edit_endpoint = '';
         item.image_models = unique(item.image_models || []);
         item.chat_models = unique(item.chat_models || []);
         item.video_models = unique(item.video_models || []);
         const modelNameSource = (item.model_names && typeof item.model_names === 'object') ? item.model_names : {};
-        const modelNameMap = {};
-        [...item.image_models, ...item.chat_models, ...item.video_models].forEach(model => {
-            const raw = String(model || '').trim();
-            const label = String(modelNameSource[raw] || modelDisplayName(raw, item) || '').trim();
-            if(raw && label && label !== raw) modelNameMap[raw] = label;
-        });
-        item.model_names = modelNameMap;
+        item.model_names = Object.fromEntries(Object.entries(modelNameSource).filter(([model, label]) => String(model || '').trim() && typeof label === 'string'));
         item.rh_apps = normalizeRhEntries(item.rh_apps || [], 'app');
         item.rh_workflows = normalizeRhEntries(item.rh_workflows || [], 'workflow');
         item.ms_loras = (Array.isArray(item.ms_loras) ? item.ms_loras : []).map(lora => ({
@@ -3816,6 +3806,8 @@ async function saveProviders(){
             enabled:lora.enabled !== false,
             note:String(lora.note || '').trim()
         })).filter(lora => lora.id && lora.target_model);
+        const defaultsVersion = Number(item.ms_defaults_version);
+        item.ms_defaults_version = Number.isFinite(defaultsVersion) ? Math.trunc(defaultsVersion) : 0;
     });
     if(new Set(providers.map(item => item.id)).size !== providers.length){
         alert(tr('api.duplicateId'));
@@ -3836,18 +3828,18 @@ async function saveProviders(){
                 image_generation_endpoint:item.image_generation_endpoint || '',
                 image_edit_endpoint:item.image_edit_endpoint || '',
                 enabled:item.enabled !== false,
-                primary:false,
+                primary:item.primary === true,
                 image_models:item.image_models || [],
                 chat_models:item.chat_models || [],
                 video_models:item.video_models || [],
                 model_names:(item.model_names && typeof item.model_names === 'object') ? item.model_names : {},
                 model_protocols:(item.model_protocols && typeof item.model_protocols === 'object') ? item.model_protocols : {},
-                ms_loras:item.id === 'modelscope' ? (item.ms_loras || []) : [],
-                ms_defaults_version:item.id === 'modelscope' ? (item.ms_defaults_version || 1) : 0,
-                rh_apps:item.id === 'runninghub' ? (item.rh_apps || []) : [],
-                rh_workflows:item.id === 'runninghub' ? (item.rh_workflows || []) : [],
-                volcengine_project_name:item.id === 'volcengine' ? (item.volcengine_project_name || VOLCENGINE_DEFAULT_PROJECT_NAME) : '',
-                volcengine_region:item.id === 'volcengine' ? (item.volcengine_region || VOLCENGINE_DEFAULT_REGION) : '',
+                ms_loras:item.ms_loras || [],
+                ms_defaults_version:item.ms_defaults_version,
+                rh_apps:item.rh_apps || [],
+                rh_workflows:item.rh_workflows || [],
+                volcengine_project_name:item.id === 'volcengine' ? (item.volcengine_project_name || VOLCENGINE_DEFAULT_PROJECT_NAME) : (item.volcengine_project_name || ''),
+                volcengine_region:item.id === 'volcengine' ? (item.volcengine_region || VOLCENGINE_DEFAULT_REGION) : (item.volcengine_region || ''),
                 volcengine_access_key_id:item.volcengine_access_key_id || undefined,
                 volcengine_secret_access_key:item.volcengine_secret_access_key || undefined,
                 api_key:item.api_key || undefined,

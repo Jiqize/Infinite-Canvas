@@ -1,9 +1,10 @@
 import json
+import asyncio
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -43,6 +44,38 @@ class ProviderNormalizationTests(unittest.TestCase):
 
         self.assertEqual(provider["protocol"], "tudou")
         self.assertEqual(provider["image_request_mode"], "tudou-async")
+
+    def test_tudou_async_image_dispatches_with_resolution(self):
+        provider = {
+            "id": "new-tudou",
+            "name": "New Tudou",
+            "base_url": "https://api.ai-tudou.net/v1",
+            "protocol": "openai",
+            "image_request_mode": "tudou-async",
+        }
+        generate = AsyncMock(return_value=("https://example.test/result.png", {"status": "SUCCESS"}))
+        with (
+            patch.object(main, "get_api_provider", return_value=provider),
+            patch.object(main, "generate_tudou_async_image", new=generate),
+        ):
+            result = asyncio.run(main.generate_ai_image(
+                "editorial look", "2048x2048", "high", "gpt-image-2-2k", [], "new-tudou", "1:1", "2k"
+            ))
+
+        self.assertEqual(result[0], "https://example.test/result.png")
+        self.assertEqual(generate.await_args.args[-1], "2k")
+
+    def test_tudou_async_poll_timeout_is_explicit(self):
+        provider = {
+            "id": "new-tudou",
+            "base_url": "https://api.ai-tudou.net/v1",
+            "image_request_mode": "tudou-async",
+        }
+        with patch.object(main, "TUDOU_ASYNC_IMAGE_TASK_TIMEOUT", 0):
+            with self.assertRaises(main.HTTPException) as raised:
+                asyncio.run(main.wait_for_image_task(object(), "task-timeout", provider))
+        self.assertEqual(raised.exception.status_code, 504)
+        self.assertIn("task-timeout", str(raised.exception.detail))
 
     def test_apimart_gemini_uses_bearer_auth_and_official_host(self):
         provider = {
@@ -102,7 +135,7 @@ class ProviderRoundTripTests(unittest.TestCase):
             "video_models": ["video-a"],
             "model_names": {"image-a": "Image A"},
             "model_protocols": {"chat-a": "gemini"},
-            "ms_loras": [{"id": "lora-a", "name": "LoRA A"}],
+            "ms_loras": [{"id": "lora-a", "name": "LoRA A", "target_model": "image-a", "strength": 0.8, "enabled": True, "note": "keep"}],
             "ms_defaults_version": 2,
             "rh_apps": [{"id": "app-a", "name": "App A"}],
             "rh_workflows": [{"id": "workflow-a", "name": "Workflow A"}],

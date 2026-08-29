@@ -618,6 +618,8 @@
             renderThreads();
         }
         window.addEventListener('message', event => {
+            if(event.origin !== window.location.origin) return;
+            if(event.source !== window && event.source !== window.parent && event.source !== window.top) return;
             if(event.data?.type === 'studio-lang') applyLanguage(event.data.lang);
         });
         window.addEventListener('studio-lang-change', () => {

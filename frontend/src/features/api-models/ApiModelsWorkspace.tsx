@@ -694,7 +694,7 @@ export function ApiModelsWorkspace({ apiConfig, providerStatus, onTaskChange, on
               </div>
               <div className="qc-api-form-grid">
                 <Field label="LoRA JSON">
-                  <textarea className="qc-api-code-area" value={selectedLoras} spellCheck={false} placeholder='[{"model_id":"model/id","weight":1}]' onChange={(event) => setLoraDrafts((current) => ({ ...current, [selectedProvider.id]: event.target.value }))} />
+                  <textarea className="qc-api-code-area" value={selectedLoras} spellCheck={false} placeholder='[{"id":"lora-id","target_model":"model/id","strength":0.8}]' onChange={(event) => setLoraDrafts((current) => ({ ...current, [selectedProvider.id]: event.target.value }))} />
                 </Field>
                 <Field label="Model defaults version">
                   <input type="number" step="1" value={selectedProvider.ms_defaults_version} spellCheck={false} placeholder="1" onChange={(event) => updateSelected({ ms_defaults_version: event.target.value === "" ? 0 : Number(event.target.value) })} />
