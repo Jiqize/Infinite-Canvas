@@ -16,13 +16,13 @@
             } catch(e) {}
         })();
     </script>
-    <script src="/static/vendor/js/tailwindcss-cdn.js?v=2026.07.29.1785407265"></script>
-    <script src="/static/vendor/js/lucide.js?v=2026.07.29.1785407265"></script>
-    <script src="/static/js/theme.js?v=2026.07.29.1785407265"></script>
-    <script src="/static/js/touch-mouse.js?v=2026.07.29.1785407265"></script>
-    <script src="/static/js/i18n.js?v=2026.07.29.1785407265"></script>
-    <link rel="stylesheet" href="/static/css/canvas-list.css?v=2026.07.29.1785407265">
-    <link rel="stylesheet" href="/static/css/theme.css?v=2026.07.29.1785407265">
+    <script src="/static/vendor/js/tailwindcss-cdn.js?v=2026.08.29.canvas-hybrid"></script>
+    <script src="/static/vendor/js/lucide.js?v=2026.08.29.canvas-hybrid"></script>
+    <script src="/static/js/theme.js?v=2026.08.29.canvas-hybrid"></script>
+    <script src="/static/js/touch-mouse.js?v=2026.08.29.canvas-hybrid"></script>
+    <script src="/static/js/i18n.js?v=2026.08.29.canvas-hybrid"></script>
+    <link rel="stylesheet" href="/static/css/canvas-list.css?v=2026.08.29.canvas-hybrid">
+    <link rel="stylesheet" href="/static/css/theme.css?v=2026.08.29.canvas-hybrid">
 </head>
 <body>
     <div id="workspace" class="workspace">
@@ -64,6 +64,17 @@
                 </div>
             </div>
 
+            <div id="canvasIntakeBar" class="ws-intake-bar" hidden>
+                <div class="ws-intake-copy">
+                    <i data-lucide="inbox" class="w-4 h-4"></i>
+                    <div>
+                        <strong id="canvasIntakeTitle">待放置素材</strong>
+                        <span id="canvasIntakeDetail">选择已有画布，或新建普通 / 智能画布作为目标。</span>
+                    </div>
+                </div>
+                <button id="clearCanvasIntakeBtn" class="ws-intake-clear" type="button" aria-label="清空待放置素材">清空待放置素材</button>
+            </div>
+
             <!-- Board (pan/zoom) -->
             <div id="board" class="ws-board">
                 <div id="boardWorld" class="ws-board-world"></div>
@@ -90,6 +101,7 @@
             <div id="boardStatus" class="ws-status"></div>
         </main>
     </div>
-    <script src="/static/js/canvas-list.js?v=2026.07.29.1785407265"></script>
+    <script src="/static/js/canvas-intake.js?v=2026.08.29.canvas-hybrid"></script>
+    <script src="/static/js/canvas-list.js?v=2026.08.29.canvas-hybrid"></script>
 </body>
 </html>

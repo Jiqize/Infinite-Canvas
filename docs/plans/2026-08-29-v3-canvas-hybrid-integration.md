@@ -223,11 +223,13 @@
 - 损坏 JSON → 原值保留且显示错误/清理动作。
 - 选择目标前刷新 → 队列仍存在；主动取消 → 队列清空且不创建节点。
 
-- [ ] **Step 1: 写队列/列表失败 Playwright 用例并确认失败**
-- [ ] **Step 2: 实现静态 intake 深模块与 React 追加生产端**
-- [ ] **Step 3: 接入 Canvas List 数量、目标选择和取消**
-- [ ] **Step 4: 运行前端构建、JS 语法与队列 focused Playwright**
-- [ ] **Step 5: 更新进展并 commit**
+- [x] **Step 1: 写队列/列表失败 Playwright 用例并确认失败**
+- [x] **Step 2: 实现静态 intake 深模块与 React 追加生产端**
+- [x] **Step 3: 接入 Canvas List 数量、目标选择和取消**
+- [x] **Step 4: 运行前端构建、JS 语法与队列 focused Playwright**
+- [x] **Step 5: 更新进展并 commit**
+
+> 进展（2026-08-29）：先确认共享模块缺失、损坏值无提示、列表无待放置状态、React 写入失败无反馈这 4 条失败基线。新增静态 `QCOSCanvasIntake` 与同构 React 队列契约，发送按 UUID 批次追加，总量上限 100；超限或 localStorage 异常整批失败且原字符串不变，旧结构使用内容哈希生成稳定批次 ID。Canvas List 显示数量或损坏提示，已有画布和新建 Classic/Smart 均可作为目标，刷新与目标选择不消费队列，主动清空发出 `cancelled`。React 失败会留在原工作区并显示可见错误。新增 6 条队列/列表用例后，`canvas_hybrid_qa` 全文件 11 项通过；生产构建、`tsc -b`、两个静态 JS 语法检查和 diff 检查通过，构建产物继续留待 Task 6 统一提交。
 
 ### Task 5: Canvas 消费者、幂等保存与 React Canvas 冻结
 

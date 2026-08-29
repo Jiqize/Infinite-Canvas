@@ -63,6 +63,10 @@ const boardResetViewBtn = document.getElementById('boardResetView');
 const pasteCanvasBtn = document.getElementById('pasteCanvasBtn');
 const emptyCreateCanvasBtn = document.getElementById('emptyCreateCanvasBtn');
 const statusEl = document.getElementById('boardStatus');
+const canvasIntakeBar = document.getElementById('canvasIntakeBar');
+const canvasIntakeTitle = document.getElementById('canvasIntakeTitle');
+const canvasIntakeDetail = document.getElementById('canvasIntakeDetail');
+const clearCanvasIntakeBtn = document.getElementById('clearCanvasIntakeBtn');
 
 /* ===== State ===== */
 let projects = [];
@@ -72,6 +76,7 @@ let currentProjectId = rememberedProjectId();
 let pendingDeleteProjectId = null;
 let statusTimer = null;
 let clipboardCanvasId = null;   // 剪切的画布（切到别的项目后粘贴）
+let canvasIntakeState = {ok:true, queue:{version:1, batches:[]}, error:'', raw:''};
 
 // board viewport (mirrors smart-canvas math)
 const viewport = { x: 0, y: 0, scale: 1 };
@@ -85,6 +90,56 @@ function setStatus(text){
     statusEl.classList.add('show');
     clearTimeout(statusTimer);
     statusTimer = setTimeout(() => statusEl.classList.remove('show'), 2200);
+}
+
+function canvasIntakeCount(){
+    return window.QCOSCanvasIntake?.countItems?.(canvasIntakeState.queue) || 0;
+}
+
+function refreshCanvasIntake(){
+    if(!window.QCOSCanvasIntake || !canvasIntakeBar) return;
+    canvasIntakeState = window.QCOSCanvasIntake.readQueue();
+    const count = canvasIntakeCount();
+    const hasStoredValue = Boolean(canvasIntakeState.raw);
+    canvasIntakeBar.hidden = canvasIntakeState.ok ? count === 0 : !hasStoredValue;
+    canvasIntakeBar.dataset.state = canvasIntakeState.ok ? (count ? 'pending' : 'empty') : 'error';
+    if(canvasIntakeState.ok) canvasIntakeBar.removeAttribute('role');
+    else canvasIntakeBar.setAttribute('role', 'alert');
+    if(!canvasIntakeState.ok){
+        canvasIntakeTitle.textContent = L('待放置素材已损坏','Pending Canvas assets are corrupt');
+        canvasIntakeDetail.textContent = canvasIntakeState.error || L('请主动清空后重新发送。','Clear the stored value and send the assets again.');
+    } else if(count){
+        canvasIntakeTitle.textContent = L(`${count} 项待放置素材`,`${count} pending Canvas asset${count === 1 ? '' : 's'}`);
+        canvasIntakeDetail.textContent = L('选择已有画布，或新建普通 / 智能画布作为放置目标。','Choose an existing canvas, or create a Classic / Smart target.');
+    }
+    if(clearCanvasIntakeBtn){
+        clearCanvasIntakeBtn.hidden = !hasStoredValue && count === 0;
+        clearCanvasIntakeBtn.textContent = L('清空待放置素材','Clear pending assets');
+        clearCanvasIntakeBtn.setAttribute('aria-label', L('清空待放置素材','Clear pending assets'));
+    }
+    const createLabel = count ? L('新建并放置','Create target') : L('新建画布','New canvas');
+    const topCreateLabel = newCanvasBtn?.querySelector('span');
+    const emptyCreateLabel = emptyCreateCanvasBtn?.querySelector('span');
+    if(topCreateLabel) topCreateLabel.textContent = createLabel;
+    if(emptyCreateLabel) emptyCreateLabel.textContent = createLabel;
+    document.body.classList.toggle('has-canvas-intake', Boolean(count));
+}
+
+function cancelCanvasIntake(){
+    if(!window.QCOSCanvasIntake) return;
+    const count = canvasIntakeCount();
+    const batchIds = canvasIntakeState.ok ? (canvasIntakeState.queue.batches || []).map(batch => batch.id) : [];
+    const result = window.QCOSCanvasIntake.clearAll();
+    if(!result.ok){
+        canvasIntakeState = {...canvasIntakeState, ok:false, error:result.error || L('清空失败','Clear failed')};
+        refreshCanvasIntake();
+        setStatus(result.error || L('清空失败','Clear failed'));
+        return;
+    }
+    window.QCOSCanvasIntake.notifyStatus({status:'cancelled', batch_ids:batchIds, item_count:count, detail:L('已取消待放置素材','Canvas intake cancelled')});
+    refreshCanvasIntake();
+    renderBoard();
+    setStatus(L('已清空待放置素材','Pending assets cleared'));
 }
 
 /* ===== Viewport math (mirrors smart-canvas.js) ===== */
@@ -390,7 +445,8 @@ function buildCard(c){
     const card = document.createElement('div');
     card.className = 'ws-card'
         + (String(c.color || '').trim() ? ' cc-marked' : '')
-        + (clipboardCanvasId === c.id ? ' cut' : '');
+        + (clipboardCanvasId === c.id ? ' cut' : '')
+        + (canvasIntakeCount() ? ' intake-target' : '');
     card.dataset.canvasId = c.id;
     card.style.left = (c.board_x || 0) + 'px';
     card.style.top = (c.board_y || 0) + 'px';
@@ -467,8 +523,8 @@ function openCanvas(c){
     const project = encodeURIComponent(c.project || currentProjectId || 'default');
     rememberProjectId(c.project || currentProjectId || 'default');
     window.location.href = (c.kind === 'smart')
-        ? `/static/smart-canvas.html?id=${enc}&project=${project}&v=2026.07.03.4`
-        : `/static/canvas.html?id=${enc}&project=${project}&v=2026.07.03.4`;
+        ? `/static/smart-canvas.html?id=${enc}&project=${project}&v=2026.08.29.canvas-hybrid`
+        : `/static/canvas.html?id=${enc}&project=${project}&v=2026.08.29.canvas-hybrid`;
 }
 
 /* ===== Card create flow ===== */
@@ -483,15 +539,16 @@ function openCreateCard(worldPt){
     el.className = 'ws-create-card';
     el.style.left = worldPt.x + 'px';
     el.style.top = worldPt.y + 'px';
+    const hasIntake = canvasIntakeCount() > 0;
     el.innerHTML = `
-        <div class="ws-create-title">${L('新建画布','New canvas')}</div>
+        <div class="ws-create-title">${hasIntake ? L('新建放置目标','Create intake target') : L('新建画布','New canvas')}</div>
         <input class="ws-create-input" type="text" maxlength="80" placeholder="${L('画布名称（可留空）','Canvas name (optional)')}">
         <div class="ws-create-toggle">
             <button class="ws-create-toggle-btn active" type="button" data-kind="classic">${L('普通画布','Classic')}</button>
             <button class="ws-create-toggle-btn" type="button" data-kind="smart">${L('智能画布','Smart')}</button>
         </div>
         <div class="ws-create-actions">
-            <button class="ws-create-confirm" type="button">${L('创建','Create')}</button>
+            <button class="ws-create-confirm" type="button">${hasIntake ? L('创建并放置','Create target') : L('创建','Create')}</button>
             <button class="ws-create-cancel" type="button">${L('取消','Cancel')}</button>
         </div>`;
     boardWorld.appendChild(el);
@@ -543,6 +600,7 @@ async function createCanvasOnBoard(title, kind, worldPt){
             canvases.push(nc);
             renderBoard();
             renderProjects();
+            if(canvasIntakeCount()) openCanvas(nc);
         }
     } catch(e){ console.error(e); setStatus(L('创建失败','Create failed')); }
 }
@@ -998,6 +1056,16 @@ emptyCreateCanvasBtn?.addEventListener('click', e => {
 boardRefreshBtn.addEventListener('click', loadAll);
 boardResetViewBtn.addEventListener('click', resetView);
 pasteCanvasBtn?.addEventListener('click', pasteCanvas);
+clearCanvasIntakeBtn?.addEventListener('click', cancelCanvasIntake);
+window.addEventListener('storage', event => {
+    if(event.key !== window.QCOSCanvasIntake?.STORAGE_KEY) return;
+    refreshCanvasIntake();
+    renderBoard();
+});
+window.addEventListener(window.QCOSCanvasIntake?.QUEUE_EVENT || 'qcos:canvas-intake', () => {
+    refreshCanvasIntake();
+    renderBoard();
+});
 
 newProjectBtn.addEventListener('click', openNewProject);
 newProjectConfirm.addEventListener('click', createProject);
@@ -1033,19 +1101,22 @@ document.addEventListener('keydown', e => {
 
 // language switch from parent (index.html) via postMessage
 window.addEventListener('message', event => {
-    if(event.origin && event.origin !== location.origin) return;
+    if(event.origin !== location.origin) return;
+    if(window.parent !== window && event.source !== window.parent && event.source !== window.top) return;
     if(event.data?.type === 'studio-lang'){
         if(event.data.lang && window.StudioI18n) StudioI18n.set(event.data.lang);
         window.StudioI18n?.apply?.();
         renderProjects();
         renderBoard();
         if(trashPanel.classList.contains('active')) renderTrash();
+        refreshCanvasIntake();
         refreshIcons();
     }
 });
 
 /* ===== Boot ===== */
 window.StudioI18n?.apply?.();
+refreshCanvasIntake();
 applyViewport();
 loadAll();
 refreshIcons();

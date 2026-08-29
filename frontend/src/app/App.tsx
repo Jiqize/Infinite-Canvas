@@ -106,6 +106,7 @@ export function App() {
     label: "Canvas ready",
     detail: "No canvas selected"
   });
+  const [canvasIntakeError, setCanvasIntakeError] = useState("");
   const [canvasContext, setCanvasContext] = useState<CanvasRailContext>({
     saveState: "idle",
     nodeCount: 0,
@@ -308,7 +309,13 @@ export function App() {
   const sendCanvasIntake = useCallback((items: CanvasIntakeItem[], detail: string) => {
     if (!canvasRoute) return;
     const queued = writeCanvasIntakeItems(items);
-    if (!queued.length) return;
+    if (!queued.ok) {
+      const message = queued.error || "Canvas intake failed.";
+      setCanvasIntakeError(message);
+      setCanvasTask({ status: "failed", label: "Canvas intake failed", detail: message, error: message });
+      return;
+    }
+    setCanvasIntakeError("");
     setCanvasTask({
       status: "pending",
       label: "Canvas intake queued",
@@ -353,6 +360,12 @@ export function App() {
           onToggleTheme={toggleTheme}
           onOpenRail={() => setRailOpen(true)}
         />
+        {canvasIntakeError ? (
+          <div className="qc-canvas-intake-alert" role="alert">
+            <span>{canvasIntakeError}</span>
+            <button type="button" aria-label="Dismiss Canvas intake error" onClick={() => setCanvasIntakeError("")}>×</button>
+          </div>
+        ) : null}
         {activeRoute.kind === "native-generate" ? (
           <div className="qc-workbench qc-workbench--native">
             <GenerateWorkspace
