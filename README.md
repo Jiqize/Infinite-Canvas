@@ -58,4 +58,4 @@ Playwright 测试需要后端运行在 `127.0.0.1:3000`，前端开发服务器�
 
 ## 来源与许可
 
-本项目基于 [Jiqize/Infinite-Canvas](https://github.com/Jiqize/Infinite-Canvas) 继续开发，并保留原项目的来源说明与许可约束。使用和再分发前请阅读 [LICENSE](LICENSE)；原许可禁止未经授权的商业封装，并要求二次开发保持开源和注明来源作者。
+本项目在 Infinite Canvas 基础上持续演进，并保留原项目的来源说明与许可约束。使用和再分发前请阅读 [LICENSE](LICENSE)；原许可禁止未经授权的商业封装，并要求二次开发保持开源和注明来源作者。
