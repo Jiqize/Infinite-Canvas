@@ -1,72 +1,65 @@
-# Quiet Creative OS Next Agent Handoff
+# V3 Hybrid Canvas Handoff
 
-## Current Checkpoint
+## Current checkpoint
 
-- Worktree: `/Users/lianglei/Desktop/git/Infinite-Canvas.codex-worktrees/quiet-creative-os-phase1`
-- Branch: `codex/quiet-creative-os-phase1`
-- Latest committed checkpoint: `1887876 feat(qcos): migrate native creative os canvas`
-- Status at handoff time: native Creative OS migration is committed locally; no push, merge, or rebase has been performed.
+- Worktree: `/Users/lianglei/Projects/git/Infinite-Canvas.codex-worktrees/v3-canvas-hybrid`
+- Branch: `codex/v3-canvas-hybrid`
+- Source base: `v3` at `3c5d65e0b383db1582aee83e1ff4e51e4b4ffb89`
+- Current source of truth: `docs/specs/2026-08-29-v3-canvas-hybrid.md`
+- Execution plan: `docs/plans/2026-08-29-v3-canvas-hybrid-integration.md`
+- External data snapshot: `/Users/lianglei/.codex/backups/infinite-canvas/20260829-204027`
+- Status: Tasks 0–6 are complete locally. Nothing has been pushed, deployed, merged, or rebased.
 
-## What Is Done
+This handoff supersedes the earlier native React Canvas direction. Historical phase documents remain in the repository as history; they are not current implementation requirements.
 
-- `/` and `/app` serve the new React shell.
-- `/legacy` no longer carries the old shell as the main product surface.
-- Native routes exist for Generate, Enhance, Edit, Online, Angle, Chat, Gallery, Canvas, API / Models, and ComfyUI.
-- Product navigation no longer exposes legacy fallback routes or retired Flatlay / Batch Try-on entries.
-- `/app/canvas` is native React and does not iframe or request `static/canvas.html`.
-- `static/canvas.html` and `static/comfyui-settings.html` remain archived and unchanged.
-- Native Canvas includes:
-  - canvas lifecycle: list, create, open, rename, save, trash, restore, purge
-  - pan, zoom, reset, node select, move, resize, delete
-  - prompt, image, output, group, prompt group, loop, LLM, generator, ModelScope, workflow/ComfyUI, and video node surfaces
-  - visible connection handles, drag-to-connect, selected-link deletion, and `{id, from, to}` save compatibility
-  - image crop, mask-node creation, and grid split
-  - output lightbox, download, and compare slider
-  - aligned compare frame and mixed decimal/percent grid cut parsing
-  - selected image execution, generator execution, workflow/ComfyUI execution, LLM execution, video execution, and ModelScope execution through existing backend contracts
-  - Gallery / recent output intake and local asset check/download
-  - explicit save with unknown field preservation
+## Product architecture now
 
-## Verified Locally
+- React owns the workspace shell, Gallery, Generate, common provider settings, and Creation Rail.
+- `/app/canvas` embeds `/static/canvas-list.html` as the only product Canvas entry.
+- Canvas List, Classic Canvas, and Smart Canvas own all node editing, execution, conflict handling, and Canvas persistence.
+- React Canvas source files remain for one release-cycle rollback safety, but there is no `native-canvas` route kind, runtime import, render branch, or production bundle reference.
+- Creation Rail exposes only pending Canvas intake count, save status, and the advanced provider-settings entry.
 
-These passed before the checkpoint:
+## Completed behavior
 
-```bash
-cd frontend && npm run build
-python scripts/guardrails.py
-npx playwright test tests/native_canvas_complete_qa.spec.mjs --reporter=line
-python main.py
-lsof -nP -iTCP:3000 -sTCP:LISTEN || true
-git diff --check
-git status --porcelain -- static/canvas.html static/comfyui-settings.html
-```
+- Ported the selected 2026-08-01 and 2026-08-04 upstream backend features without replacing local `main.py`.
+- Added four Midjourney endpoints, Smart Canvas MiniMax export, MiniMax H3 assets, Tudou async mode, RunningHub assets, and targeted APIMart/Gemini/Jimeng fixes.
+- Synced Classic and Smart Canvas Midjourney/MiniMax functionality while excluding DX-OS, announcements, README/VERSION changes, and backup files.
+- React common provider settings now preserve the complete backend public contract and expose eight protocols plus five image request modes; legacy Tudou values remain lossless.
+- `/app/provider-settings` is hidden, not kept alive, and keeps API / Models highlighted.
+- Canvas intake uses append-only V1 batches in `qcos_canvas_intake_items`, preserves corrupt/failed data, caps pending items at 100, and supports explicit cancellation.
+- Classic maps intake `image` to image nodes and `output` to output nodes. Smart maps both to `smart-image` nodes.
+- Intake batches clear only after a successful Canvas save. 409 retries and saved-node markers prevent duplicate insertion across retries or refreshes.
+- Cross-frame messages require exact same-origin and a registered source window. Canvas metadata polling pauses in the background and checks immediately on return; generation polling is unchanged.
 
-Important result details:
+## Verification at the Task 6 boundary
 
-- Playwright suite: 3 tests passed.
-- Native Canvas route: zero iframes and no `/static/canvas.html` request in QA.
-- `static/canvas.html` and `static/comfyui-settings.html`: no tracked changes.
-- `static/app/`, `frontend/test-results/`, `frontend/playwright-report/`, and `frontend/node_modules/` are intentionally ignored.
+The stage-closing gates recorded in the plan passed:
 
-## What Is Not Yet Proven
+- `python3 -m py_compile main.py`
+- full `python3 -m pytest -q`: 46 passed, 2 subtests passed (8 existing deprecation warnings)
+- syntax checks for all six changed static JavaScript files
+- `frontend npm run build`
+- `canvas_hybrid_qa.spec.mjs` and `api_models_hybrid_qa.spec.mjs`: 27 passed
+- FastAPI route audit: 190 decorators and 190 unique method/path pairs
+- `git diff --check`
+- repository safety scan for secrets, databases, Canvas data, logs, backups, reports, and dependencies
 
-The deterministic QA is mostly mocked. The next useful work is not another phase. It is real local acceptance with the user's actual provider configuration and real image/workflow inputs.
+The obsolete `native_canvas_complete_qa.spec.mjs` was removed only after the hybrid Canvas suite passed. The committed `static/app` contains only the current build hashes and does not contain a React Canvas runtime reference.
 
-Do not claim production readiness until these are manually exercised with real credentials and real assets:
+## Remaining Task 7 only
 
-- API / Models provider save and key status.
-- Generate / Enhance / Edit / Online / Angle / Chat real provider calls.
-- Canvas real image upload, crop, mask, split, save, reload.
-- Canvas LLM -> Generator / Workflow / Video real execution chains.
-- ComfyUI local workflow run against the user's actual ComfyUI instance.
-- Output preview, compare, and download using real generated files.
-- Gallery -> Canvas intake using real gallery assets.
+- Run the application against copied snapshot data, never the original user Canvas directory.
+- Submit at most one minimal APIMart request and one minimal Comfly request; wait at most ten minutes for each and do not retry quota/rate-limit failures.
+- Check MiniMax local workflow readiness without installing missing models or nodes.
+- Load and save copies of the seven Classic and four Smart Canvases; verify original hashes and mtimes remain unchanged.
+- Record real outcomes and environment blockers in the plan, `TODOS.md`, and `REVIEW_HANDOFF.md`.
+- Run the final focused closeout and local commit. Do not push, deploy, or merge.
 
-## Guardrails For The Next Agent
+## Safety rules
 
-- Do not create a new worktree.
-- Do not rewrite `static/canvas.html` or `static/comfyui-settings.html`.
-- Do not change backend API schemas unless the user explicitly approves a new backend migration.
-- Do not push, merge, or rebase.
-- Preserve current native route direction; do not reintroduce visible legacy navigation.
-- Prefer fixing real acceptance failures over adding new phases.
+- Do not use the original dirty worktree for this migration.
+- Do not modify original user Canvas or provider data during acceptance.
+- Do not buy credits, create accounts, install missing workflow models/nodes, or broaden provider testing.
+- Treat quota, rate-limit, missing ffmpeg, missing model, and missing custom-node results as explicit environment outcomes, not reasons to change product code.
+- Do not restore the superseded zero-iframe/native React Canvas QA.

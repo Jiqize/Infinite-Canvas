@@ -302,11 +302,13 @@
 - 两个指定 Playwright 文件 → 全部通过。
 - 路由审计 → 190/190；`git diff --check` → 通过；敏感文件审计 → 无命中。
 
-- [ ] **Step 1: 完成替代测试并确认绿色后删除旧测试**
-- [ ] **Step 2: 更新 handoff 的 superseded 指向与当前验证记录**
-- [ ] **Step 3: 构建并整理唯一新 hash 产物**
-- [ ] **Step 4: 运行完整 deterministic gates 和安全审计**
-- [ ] **Step 5: 更新进展并 commit**
+- [x] **Step 1: 完成替代测试并确认绿色后删除旧测试**
+- [x] **Step 2: 更新 handoff 的 superseded 指向与当前验证记录**
+- [x] **Step 3: 构建并整理唯一新 hash 产物**
+- [x] **Step 4: 运行完整 deterministic gates 和安全审计**
+- [x] **Step 5: 更新进展并 commit**
+
+> 进展（2026-08-29）：混合 Canvas 套件先以 22 项全绿取代旧原生 Canvas 行为，随后删除包含“零 iframe”错误目标的 `native_canvas_complete_qa.spec.mjs`。当前 spec 明确 supersede 三份 React 原生 Canvas 目标文档，历史 phase 文档不改写；handoff 已更新为混合架构与仅剩 Task 7。最终构建仅保留 `index-C6kl7yOc.js`、`index-CvLTBReO.css` 和入口 HTML，产物扫描无 `CanvasWorkspace`/`native-canvas`。完整门禁真实结果：`py_compile` 通过；pytest 为 46 passed、2 subtests passed、8 条既有 deprecation warnings；6 个变更后静态 JS 全部通过语法检查；构建成功；两个指定 Playwright 文件合计 27 passed；路由为 190/190；`git diff --check` 通过。安全审计覆盖从迁移基线起的 44 个变更路径，敏感/运行数据路径 0、高可信密钥模式 0、被跟踪运行产物 0；`static/app` 仅含当前 3 个文件。
 
 ### Task 7: 有限真实验收与收口
 
