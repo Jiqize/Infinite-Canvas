@@ -33,5 +33,8 @@ data/*.local-backup
 
 # Generated local outputs
 output/
+assets/input/
+assets/library/
+assets/uploads/
 history.json
 /*-check.png
