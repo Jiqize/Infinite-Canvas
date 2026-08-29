@@ -146,11 +146,13 @@
 - 智能页面 → MiniMax 入口、时间线和导出入口存在，mock 错误可见。
 - 全仓功能文件扫描 → 无新增 DX-OS、backup/stable/broken 文件。
 
-- [ ] **Step 1: 增加 focused 浏览器断言并运行确认失败**
-- [ ] **Step 2: 移植经典 Canvas 功能 hunk**
-- [ ] **Step 3: 移植智能 Canvas、旧高级设置和旧 Chat 功能 hunk**
-- [ ] **Step 4: 运行静态语法与 focused 浏览器检查**
-- [ ] **Step 5: 更新进展并 commit**
+- [x] **Step 1: 增加 focused 浏览器断言并运行确认失败**
+- [x] **Step 2: 移植经典 Canvas 功能 hunk**
+- [x] **Step 3: 移植智能 Canvas、旧高级设置和旧 Chat 功能 hunk**
+- [x] **Step 4: 运行静态语法与 focused 浏览器检查**
+- [x] **Step 5: 更新进展并 commit**
+
+> 进展（2026-08-29）：先得到 3 条 focused Playwright 预期失败基线，再按两个固定提交的语义 hunk 移植经典 Canvas 的 Midjourney/MiniMax、智能 Canvas 的 MiniMax 时间线与导出、旧高级设置的 Tudou 异步模式和旧 Chat 画幅/分辨率字段。保留本地 RunningHub、LTX、ComfyUI、任务恢复和主题桥；旧 `protocol=tudou` 仅在读取已有配置时以禁用选项显示。修改的 4 个静态 JS 全部通过 `node --check`，扩展后的 5 条浏览器用例覆盖入口、Midjourney mock 成功与明确失败，全部通过；四个 HTML 的缓存标识统一为 `2026.08.29.canvas-hybrid`，无 DX-OS 或临时备份文件。
 
 ### Task 3: React 供应商设置无损化与高级入口
 
