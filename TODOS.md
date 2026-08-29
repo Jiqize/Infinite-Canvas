@@ -10,8 +10,8 @@
 
 **Context:** V3 混合收口已确定经典 Canvas 和智能 Canvas 为唯一正式实现。本次只移除 React Canvas 的路由、import 与渲染分支，保留源码作为一个发布周期内的可审计回退参考。删除前需确认该发布周期没有需要从旧源码恢复的行为，并重新运行混合 Canvas Playwright 套件。
 
-**Effort:** S  
-**Priority:** P3  
+**Effort:** S
+**Priority:** P3
 **Depends on:** 混合 Canvas 至少完成一个稳定发布周期
 
 ## QA
@@ -24,8 +24,8 @@
 
 **Context:** 2026-08-29 的有限验收中，MiniMax H3 工作流 JSON 可加载（19 个节点），配置文件可加载（5 个字段），但本机 `127.0.0.1:8188` 的 ComfyUI 不可达，因此节点与模型未做真实验证。Comfly 的唯一一次最小请求返回 HTTP 401（密钥无效），按计划未重试；后续需先更新有效密钥。RunningHub 和 ModelScope 本轮没有可用的真实验收环境。后续验收仍须遵守每个平台一次最小提交、有限等待和不自动购买额度的边界，并把环境版本与结果写入当前 handoff。
 
-**Effort:** M  
-**Priority:** P2  
+**Effort:** M
+**Priority:** P2
 **Depends on:** Comfly 有效密钥、ModelScope/RunningHub 有效配置，以及可访问且已安装 MiniMax H3 节点与模型的 ComfyUI
 
 ## Completed

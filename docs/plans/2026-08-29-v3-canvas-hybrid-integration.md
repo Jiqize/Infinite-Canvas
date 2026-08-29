@@ -1,7 +1,7 @@
 # V3 混合 Canvas 收口 Implementation Plan
 
-**Goal:** 保留 React 工作区，以经典 Canvas、智能 Canvas 与 Canvas List 作为唯一正式画布实现，吸收两个固定上游提交的有效功能，并补齐无损供应商设置与可靠素材交接。  
-**Architecture:** React 负责工作区、素材生产、常用设置和状态展示；旧 Canvas 模块独占节点解释、执行与保存。两侧通过同源消息和 `qcos_canvas_intake_items` 持久批次队列连接，后端继续以现有 FastAPI 单文件和 Canvas CRUD 为共享边界。  
+**Goal:** 保留 React 工作区，以经典 Canvas、智能 Canvas 与 Canvas List 作为唯一正式画布实现，吸收两个固定上游提交的有效功能，并补齐无损供应商设置与可靠素材交接。
+**Architecture:** React 负责工作区、素材生产、常用设置和状态展示；旧 Canvas 模块独占节点解释、执行与保存。两侧通过同源消息和 `qcos_canvas_intake_items` 持久批次队列连接，后端继续以现有 FastAPI 单文件和 Canvas CRUD 为共享边界。
 **Tech Stack:** FastAPI、Pydantic、静态 HTML/CSS/JavaScript、React 19、TypeScript、Vite、pytest、Playwright。
 
 ## Global Constraints

@@ -1,7 +1,7 @@
 # V3 混合 Canvas 收口 Spec
 
-**日期：** 2026-08-29  
-**目标分支：** `codex/v3-canvas-hybrid`  
+**日期：** 2026-08-29
+**目标分支：** `codex/v3-canvas-hybrid`
 **事实来源：** 本文是本次混合 Canvas 收口的唯一行为与验收标准。
 
 本文取代 `docs/quiet-creative-os-native-canvas-complete-migration-goal.md`、`docs/quiet-creative-os-native-canvas-complete-migration.md`、`docs/quiet-creative-os-canvas-completion-plan.md` 和旧版 `docs/quiet-creative-os-next-agent-handoff.md` 中“React 原生 Canvas 是最终主实现”的当前目标。上述历史文档及 phase 记录仅作为历史背景保留，不再约束后续实现。
