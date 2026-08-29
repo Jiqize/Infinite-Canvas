@@ -1,0 +1,37 @@
+# macOS and local tooling
+.DS_Store
+.gstack/
+.multicrew/
+
+# Python runtime and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Frontend dependencies and browser reports
+frontend/node_modules/
+frontend/test-results/
+frontend/playwright-report/
+
+# Local secrets and secret backups (API/.env is an existing tracked template)
+API/.env.*
+API/*.local-backup
+
+# Runtime data and databases
+data/api_providers.json
+data/canvases/
+data/conversations/
+data/media_previews/
+data/projects.json
+data/prompt_libraries.json
+data/gallery_meta.json
+data/*.db
+data/*.db-*
+data/*.log
+data/*.pid
+data/*.local-backup
+
+# Generated local outputs
+output/
+history.json
+/*-check.png

@@ -71,9 +71,9 @@
 - [x] **Step 2: 创建受限外部快照**
 - [x] **Step 3: 写入并单独提交 spec**
 - [x] **Step 4: 写入并单独提交本接口级 plan**
-- [ ] **Step 5: 写 `.gitignore` 与 `TODOS.md`，运行 ignore/状态审计并提交**
+- [x] **Step 5: 写 `.gitignore` 与 `TODOS.md`，运行 ignore/状态审计并提交**
 
-> 进展（2026-08-29）：独立工作树已从 `v3` HEAD 创建；外部快照位于 `/Users/lianglei/.codex/backups/infinite-canvas/20260829-204027` 且权限为 `0700`；spec 已在 `65cf914` 单独提交。
+> 进展（2026-08-29）：独立工作树已从 `v3` HEAD 创建；外部快照位于 `/Users/lianglei/.codex/backups/infinite-canvas/20260829-204027` 且权限为 `0700`；spec 已在 `65cf914` 单独提交，plan 已在 `543e57c` 单独提交；精确 ignore 规则保留 `scripts/` 与 `static/app`，两项明确延期工作已按规范落入 `TODOS.md`。
 
 ### Task 1: 后端协议与运行资产
 
