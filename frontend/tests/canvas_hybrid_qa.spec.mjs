@@ -241,6 +241,37 @@ test("classic Canvas exposes Midjourney and MiniMax nodes without DX-OS", async 
   expect((await page.locator("body").innerText()).toLowerCase()).not.toContain("dx-os");
 });
 
+test("classic Canvas toolbar fills the row and aligns every control", async ({ page }) => {
+  await page.setViewportSize({ width: 1460, height: 810 });
+  await mockCanvasConsumerApis(page);
+  await page.goto(`${BASE}/static/canvas.html?id=qa-canvas`, { waitUntil: "domcontentloaded" });
+  await page.locator("#quickToolbar.collapsed .toolbar-toggle").click();
+  await expect(page.locator("#quickToolbar:not(.collapsed)")).toBeVisible();
+
+  const metrics = await page.locator("#quickToolbar").evaluate((toolbar) => {
+    const toolbarRect = toolbar.getBoundingClientRect();
+    const navRect = document.querySelector(".canvas-nav").getBoundingClientRect();
+    const buttons = [...toolbar.querySelectorAll(":scope > .toolbar-toggle, .toolbar-items > .tool-btn, .toolbar-fixed > .tool-btn")]
+      .map((button) => button.getBoundingClientRect());
+    const heights = buttons.map((rect) => rect.height);
+    const tops = buttons.map((rect) => rect.top);
+    const items = toolbar.querySelector(".toolbar-items");
+    return {
+      gapAfterNavigation: toolbarRect.left - navRect.right,
+      rightGap: innerWidth - toolbarRect.right,
+      heightSpread: Math.max(...heights) - Math.min(...heights),
+      topSpread: Math.max(...tops) - Math.min(...tops),
+      itemsOverflow: items.scrollWidth > items.clientWidth + 1
+    };
+  });
+
+  expect(metrics.gapAfterNavigation).toBeLessThanOrEqual(16);
+  expect(metrics.rightGap).toBeLessThanOrEqual(26);
+  expect(metrics.heightSpread).toBeLessThanOrEqual(0.25);
+  expect(metrics.topSpread).toBeLessThanOrEqual(0.25);
+  expect(metrics.itemsOverflow).toBe(false);
+});
+
 function classicMidjourneyCanvas() {
   return {
     id: "qa-canvas",

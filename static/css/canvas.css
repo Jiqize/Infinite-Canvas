@@ -139,7 +139,7 @@ body.studio-theme-dark .canvas-meta-pop .emoji-option:hover { background:#263449
 .toolbar-fixed { flex:0 0 auto; display:flex; gap:6px; align-items:center; }
 .toolbar-toggle i { transition:transform .18s var(--ease); }
 .toolbar.collapsed .toolbar-toggle i { transform:rotate(180deg); }
-.toolbar .toolbar-toggle { width:24px; height:25px; min-width:24px; padding:0; border-radius:10px; }
+.toolbar .toolbar-toggle { width:38px; height:38px; min-width:38px; padding:0; border-radius:999px; }
 .toolbar .toolbar-log,
 .toolbar .toolbar-asset { width:auto; height:38px; min-width:38px; padding:0 12px; }
 .toolbar.collapsed { flex:0 0 auto; width:auto; max-width:calc(100vw - 28px); padding:5px; }
@@ -1510,9 +1510,9 @@ html[data-studio-scale="off"].studio-scale-managed .toolbar.scale-expanded .tool
 @media (max-width:1320px), (max-height:860px) {
     html[data-studio-scale="off"].studio-scale-managed .toolbar:not(.collapsed),
     html[data-studio-scale="off"].studio-scale-managed .toolbar.scale-expanded {
-        flex:1 1 auto;
-        width:auto;
-        max-width:calc(100vw - 430px);
+        flex:1 1 0;
+        width:0;
+        max-width:none;
         align-self:auto;
         padding:6px;
         gap:6px;
