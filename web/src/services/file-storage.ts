@@ -7,6 +7,7 @@ export type UploadedFile = { url: string; storageKey: string; bytes: number; mim
 
 const store = localforage.createInstance({ name: "infinite-canvas", storeName: "media_files" });
 const canvasLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "canvas_generation_logs" });
+const videoLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
 const objectUrls = new Map<string, string>();
 
 export async function uploadMediaFile(input: string | Blob, prefix = "file"): Promise<UploadedFile> {
@@ -54,10 +55,15 @@ export async function deleteStoredMedia(keys: Iterable<string>) {
 
 export async function cleanupUnusedMedia(usedData: unknown) {
     const usedKeys = collectMediaStorageKeys(usedData);
-    // 生成画廊引用的视频不回收
-    await canvasLogStore.iterate((value) => {
-        collectMediaStorageKeys(value, usedKeys);
-    });
+    // 生成画廊和视频创作台日志引用的视频不回收
+    await Promise.all([
+        canvasLogStore.iterate((value) => {
+            collectMediaStorageKeys(value, usedKeys);
+        }),
+        videoLogStore.iterate((value) => {
+            collectMediaStorageKeys(value, usedKeys);
+        }),
+    ]);
     const unused: string[] = [];
     await store.iterate((_value, key) => {
         if (!usedKeys.has(key)) unused.push(key);

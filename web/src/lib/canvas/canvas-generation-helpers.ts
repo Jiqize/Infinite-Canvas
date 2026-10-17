@@ -123,6 +123,38 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
     };
 }
 
+// buildGenerationConfig 的反向映射：节点里改的生成设置同步成全局默认，下次新建节点沿用上次的设置
+const MODEL_KEY_BY_MODE: Record<CanvasNodeGenerationMode, keyof AiConfig> = { image: "imageModel", video: "videoModel", audio: "audioModel", text: "textModel" };
+const GLOBAL_KEY_BY_METADATA: Partial<Record<keyof CanvasNodeMetadata, keyof AiConfig>> = {
+    reasoningEffort: "reasoningEffort",
+    quality: "quality",
+    size: "size",
+    background: "background",
+    seconds: "videoSeconds",
+    vquality: "vquality",
+    generateAudio: "videoGenerateAudio",
+    watermark: "videoWatermark",
+    videoMode: "videoMode",
+    audioVoice: "audioVoice",
+    audioFormat: "audioFormat",
+    audioSpeed: "audioSpeed",
+    audioInstructions: "audioInstructions",
+};
+
+export function nodeConfigPatchToGlobal(patch: Partial<CanvasNodeMetadata>, mode: CanvasNodeGenerationMode): Partial<Record<keyof AiConfig, string>> {
+    const result: Partial<Record<keyof AiConfig, string>> = {};
+    for (const [key, value] of Object.entries(patch)) {
+        if (value === undefined || value === null) continue;
+        if (key === "model") result[MODEL_KEY_BY_MODE[mode]] = String(value);
+        else if (key === "count" && mode === "image") result.canvasImageCount = String(value);
+        else {
+            const globalKey = GLOBAL_KEY_BY_METADATA[key as keyof CanvasNodeMetadata];
+            if (globalKey) result[globalKey] = String(value);
+        }
+    }
+    return result;
+}
+
 export function hasResumableVideoTask(node: CanvasNodeData) {
     return node.type === CanvasNodeType.Video && Boolean(node.metadata?.videoTaskId) && !node.metadata?.content;
 }
