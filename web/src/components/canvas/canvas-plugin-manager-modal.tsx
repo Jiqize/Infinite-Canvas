@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { App, Button, Input, Modal, Popconfirm, Switch, Tabs } from "antd";
-import { AlertTriangle, Download, Puzzle, RefreshCw, Trash2 } from "lucide-react";
+import { AlertTriangle, Download, Plus, Puzzle, RefreshCw, Search, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { useCanvasTheme } from "@/hooks/use-canvas-theme";
+import { getNodePluginId, getNodeSpec, listNodeDefinitions, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
 import { installPluginFromUrl, setPluginEnabled, uninstallPlugin, updatePlugin } from "@/lib/canvas/plugin-loader";
 import { fetchOfficialPlugins, hasUpgrade, type OfficialPluginEntry } from "@/lib/canvas/plugin-registry";
 import { usePluginStore, type InstalledPlugin } from "@/stores/canvas/use-plugin-store";
 
-export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+// 节点管理器：按节点浏览已注册节点（内置 + 插件），并合并原插件的安装、启停、更新、卸载
+export function CanvasPluginManagerModal({ open, onClose, onCreateNode }: { open: boolean; onClose: () => void; onCreateNode?: (type: string) => void }) {
     const { t } = useTranslation();
     const theme = useCanvasTheme();
     const { message } = App.useApp();
@@ -16,14 +18,20 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
     const [url, setUrl] = useState("");
     const [installing, setInstalling] = useState(false);
     const [busyId, setBusyId] = useState<string | null>(null);
+    const [keyword, setKeyword] = useState("");
+    useNodeRegistryVersion();
 
     const [official, setOfficial] = useState<OfficialPluginEntry[]>([]);
     const [loadingOfficial, setLoadingOfficial] = useState(false);
     const [officialError, setOfficialError] = useState<string | null>(null);
 
     const recordById = useMemo(() => new Map(plugins.map((item) => [item.id, item])), [plugins]);
-    const localPlugins = useMemo(() => plugins.filter((item) => item.local), [plugins]);
-    const thirdPartyPlugins = useMemo(() => plugins.filter((item) => !item.local && !item.official), [plugins]);
+    // 搜索同时作用于节点和插件列表
+    const query = keyword.trim().toLowerCase();
+    const matches = (...texts: (string | undefined)[]) => !query || texts.some((text) => text?.toLowerCase().includes(query));
+    const localPlugins = plugins.filter((item) => item.local && matches(item.name, item.id, item.description));
+    const thirdPartyPlugins = plugins.filter((item) => !item.local && !item.official && matches(item.name, item.id, item.description, item.url));
+    const officialFiltered = official.filter((entry) => matches(entry.name, entry.id, entry.description));
 
     const loadOfficial = useCallback(async () => {
         setLoadingOfficial(true);
@@ -166,7 +174,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
                 emptyHint(t("canvas.plugins.noOfficial"))
             ) : (
                 <div className="thin-scrollbar max-h-[46vh] space-y-2 overflow-auto">
-                    {official.map((entry) => {
+                    {officialFiltered.map((entry) => {
                         const record = recordById.get(entry.id);
                         // Show the update dot and highlight the action when the remote version is newer.
                         const upgradable = Boolean(record && hasUpgrade(record.version, entry.version));
@@ -206,20 +214,95 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
         </div>
     );
 
+    // 节点按来源分组：内置在前，其后每个已安装插件一组；停用插件的节点未注册，只显示提示
+    const definitions = listNodeDefinitions();
+    const nodeGroups = [
+        { id: "builtin", name: t("canvas.plugins.builtinGroup"), record: undefined as InstalledPlugin | undefined },
+        ...plugins.map((record) => ({ id: record.id, name: record.name, record })),
+    ]
+        .map((group) => ({ ...group, defs: definitions.filter((def) => getNodePluginId(def.type) === group.id && matches(getNodeSpec(def.type).title, def.type, def.description, group.name)) }))
+        .filter((group) => group.defs.length > 0 || (group.record && !group.record.enabled && matches(group.name, group.id)));
+
+    const nodeCard = (def: (typeof definitions)[number]) => (
+        <div key={def.type} className="flex items-start gap-3 rounded-xl border px-3 py-2.5" style={{ borderColor: theme.node.stroke, background: theme.node.fill }}>
+            <span className="grid size-9 shrink-0 place-items-center rounded-lg" style={{ background: theme.toolbar.activeBg, color: theme.node.muted }}>
+                {def.icon}
+            </span>
+            <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium" style={{ color: theme.node.text }}>
+                    {getNodeSpec(def.type).title}
+                </div>
+                <div className="mt-0.5 truncate font-mono text-[11px]" style={{ color: theme.node.muted }} title={def.type}>
+                    {def.type}
+                </div>
+                {def.description ? (
+                    <div className="mt-1 line-clamp-2 text-xs" style={{ color: theme.node.muted }}>
+                        {def.description}
+                    </div>
+                ) : null}
+            </div>
+            {onCreateNode && def.showInCreateMenu !== false ? (
+                <Button
+                    type="text"
+                    size="small"
+                    icon={<Plus className="size-4" />}
+                    title={t("canvas.plugins.addToCanvas")}
+                    onClick={() => {
+                        onCreateNode(def.type);
+                        onClose();
+                    }}
+                />
+            ) : null}
+        </div>
+    );
+
+    const nodesTab = (
+        <div className="thin-scrollbar max-h-[56vh] space-y-4 overflow-auto pr-1">
+            {nodeGroups.length === 0
+                ? emptyHint(t("canvas.plugins.noNodes"))
+                : nodeGroups.map((group) => (
+                      <div key={group.id}>
+                          <div className="mb-2 flex items-center gap-2">
+                              <span className="text-sm font-medium" style={{ color: theme.node.text }}>
+                                  {group.name}
+                              </span>
+                              {group.record ? versionTag(group.record.version) : null}
+                              <span className="text-xs" style={{ color: theme.node.muted }}>
+                                  {t("canvas.plugins.nodeCount", { count: group.defs.length })}
+                              </span>
+                              <span className="flex-1" />
+                              {group.record ? (
+                                  <Switch size="small" checked={group.record.enabled} loading={busyId === group.id} onChange={(checked) => runOnPlugin(group.record!, () => setPluginEnabled(group.record!, checked), t(checked ? "canvas.plugins.enabled" : "canvas.plugins.disabled"))} />
+                              ) : null}
+                          </div>
+                          {group.defs.length > 0 ? (
+                              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{group.defs.map(nodeCard)}</div>
+                          ) : (
+                              <div className="rounded-lg border border-dashed px-3 py-2 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
+                                  {t("canvas.plugins.pluginDisabledHint")}
+                              </div>
+                          )}
+                      </div>
+                  ))}
+        </div>
+    );
+
     const tabs = [
+        { key: "nodes", label: t("canvas.plugins.nodesTab"), children: nodesTab },
         { key: "official", label: t("canvas.plugins.official"), children: officialTab },
-        ...(localPlugins.length > 0 ? [{ key: "local", label: t("canvas.plugins.local"), children: localTab }] : []),
+        ...(plugins.some((item) => item.local) ? [{ key: "local", label: t("canvas.plugins.local"), children: localTab }] : []),
         { key: "third", label: t("canvas.plugins.thirdParty"), children: thirdPartyTab },
     ];
 
     return (
-        <Modal title={t("canvas.plugins.title")} open={open} onCancel={onClose} footer={null} centered width={640}>
+        <Modal title={t("canvas.plugins.title")} open={open} onCancel={onClose} footer={null} centered width={900}>
             <div className="space-y-3">
+                <Input prefix={<Search className="size-4 opacity-50" />} placeholder={t("canvas.plugins.searchPlaceholder")} value={keyword} onChange={(event) => setKeyword(event.target.value)} allowClear />
                 <div className="flex items-start gap-2 rounded-lg border px-3 py-2 text-xs leading-5" style={{ borderColor: "#f59e0b55", background: "#f59e0b14", color: theme.node.text }}>
                     <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
                     <span>{t("canvas.plugins.warning")}</span>
                 </div>
-                <Tabs defaultActiveKey="official" items={tabs} />
+                <Tabs defaultActiveKey="nodes" items={tabs} />
             </div>
         </Modal>
     );

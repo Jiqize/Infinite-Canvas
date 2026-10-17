@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { Tooltip } from "antd";
-import { BookOpen, Keyboard, Puzzle, Settings2 } from "lucide-react";
+import { BookOpen, Boxes, Keyboard, Settings2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { useCanvasTheme } from "@/hooks/use-canvas-theme";
@@ -37,14 +37,16 @@ export function UserStatusActions({ showConfig = true, variant = "default", onOp
 
     return (
         <div className="inline-flex shrink-0 items-center gap-1">
+            {/* 画布页用节点管理器替换文档链接；文档入口仍保留在 ☰ 菜单 */}
             {onOpenPlugins ? (
                 <button type="button" className={naturalIconClass} style={iconStyle} onClick={onOpenPlugins} aria-label={t("topNav.plugins")} title={t("topNav.plugins")}>
-                    <Puzzle className="size-4" />
+                    <Boxes className="size-4" />
                 </button>
-            ) : null}
-            <a href={DOCS_URL} target="_blank" rel="noopener noreferrer" className={naturalIconClass} style={iconStyle} aria-label={t("topNav.docs")} title={t("topNav.docs")}>
-                <BookOpen className="size-4" />
-            </a>
+            ) : (
+                <a href={DOCS_URL} target="_blank" rel="noopener noreferrer" className={naturalIconClass} style={iconStyle} aria-label={t("topNav.docs")} title={t("topNav.docs")}>
+                    <BookOpen className="size-4" />
+                </a>
+            )}
             {showConfig ? (
                 <button type="button" className={naturalIconClass} style={iconStyle} onClick={() => openConfigDialog(false)} aria-label={t("navigation.config")} title={t("navigation.config")}>
                     <Settings2 className="size-4" />
