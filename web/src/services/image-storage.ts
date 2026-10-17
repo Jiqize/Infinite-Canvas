@@ -18,6 +18,7 @@ const store = localforage.createInstance({ name: "infinite-canvas", storeName: "
 const previewStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_previews" });
 const imageLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
 const videoLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
+const canvasLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "canvas_generation_logs" });
 const objectUrls = new Map<string, string>();
 const previewUrls = new Map<string, string>();
 const previewListeners = new Set<() => void>();
@@ -247,6 +248,10 @@ export async function cleanupUnusedImages(usedData: unknown) {
             collectImageStorageKeys(value, usedKeys);
         }),
         videoLogStore.iterate((value) => {
+            collectImageStorageKeys(value, usedKeys);
+        }),
+        // 生成画廊引用的图片不回收
+        canvasLogStore.iterate((value) => {
             collectImageStorageKeys(value, usedKeys);
         }),
     ]);

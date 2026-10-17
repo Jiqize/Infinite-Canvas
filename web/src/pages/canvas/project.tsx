@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Group, Video } from "lucide-react";
@@ -72,6 +72,8 @@ import {
 import { getNodeDefinition, isBuiltinNodeType as isBuiltinType, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
 import { registerBuiltinNodes } from "@/components/canvas/nodes/builtin-nodes";
 import { CanvasPluginManagerModal } from "@/components/canvas/canvas-plugin-manager-modal";
+import { useGenerationRecorder } from "@/pages/canvas/hooks/use-generation-recorder";
+import type { GalleryItem } from "@/services/generation-gallery";
 import { CanvasRefreshShell } from "@/components/canvas/canvas-refresh-shell";
 import { CanvasTopBar } from "@/components/canvas/canvas-top-bar";
 import { ConnectionCreateMenu, NodeCreateMenu, type PendingConnectionCreate } from "@/components/canvas/canvas-create-menus";
@@ -142,6 +144,8 @@ function applyGeneratedVideo(item: CanvasNodeData, video: UploadedFile, extra: C
         metadata: { ...item.metadata, ...videoMetadata(video), ...extra },
     };
 }
+
+const CanvasGenerationGalleryModal = lazy(() => import("@/components/canvas/canvas-generation-gallery-modal").then((m) => ({ default: m.CanvasGenerationGalleryModal })));
 
 export default function CanvasPage() {
     const [mounted, setMounted] = useState(false);
@@ -226,6 +230,7 @@ function InfiniteCanvasPage() {
     const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
     const theme = useCanvasTheme();
     const [nodes, setNodes] = useState<CanvasNodeData[]>([]);
+    useGenerationRecorder(projectId, currentProject?.title, nodes);
     const [connections, setConnections] = useState<CanvasConnection[]>([]);
     const [chatSessions, setChatSessions] = useState<CanvasAssistantSession[]>([]);
     const [activeChatId, setActiveChatId] = useState<string | null>(null);
@@ -254,6 +259,7 @@ function InfiniteCanvasPage() {
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
     const [infoNodeId, setInfoNodeId] = useState<string | null>(null);
     const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
+    const [galleryOpen, setGalleryOpen] = useState(false);
     const [cropNodeId, setCropNodeId] = useState<string | null>(null);
     const [maskEditNodeId, setMaskEditNodeId] = useState<string | null>(null);
     const [splitNodeId, setSplitNodeId] = useState<string | null>(null);
@@ -3041,6 +3047,18 @@ function InfiniteCanvasPage() {
         [insertAssistantImage, insertAssistantText, screenToCanvas, size.height, size.width],
     );
 
+    // 画廊「复用参数」：在画布中心新建一个预填提示词和参数的生成配置节点
+    const reuseGalleryParams = useCallback(
+        (item: GalleryItem) => {
+            const node = createCanvasNode(CanvasNodeType.Config, getCanvasCenter(), { generationMode: item.kind, prompt: item.prompt, model: item.model || undefined, size: item.size, quality: item.quality, seconds: item.seconds });
+            setNodes((prev) => [...prev, node]);
+            setSelectedNodeIds(new Set([node.id]));
+            setSelectedConnectionId(null);
+            setDialogNodeId(node.id);
+        },
+        [getCanvasCenter],
+    );
+
     // Memoize every callback and render function passed to CanvasNode.
     // CanvasNode uses React.memo, but new prop references would invalidate it on every render and rerender every node
     // during click, hover, or viewport changes, which is especially expensive for Markdown. These useCallback values
@@ -3174,6 +3192,7 @@ function InfiniteCanvasPage() {
                     onExportProject={exportCurrentProject}
                     onImportImage={() => handleUploadRequest()}
                     onOpenPlugins={() => setPluginManagerOpen(true)}
+                    onOpenGallery={() => setGalleryOpen(true)}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
                     agentOpen={agentPanelOpen}
@@ -3421,6 +3440,11 @@ function InfiniteCanvasPage() {
 
                 <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} />
                 <CanvasPluginManagerModal open={pluginManagerOpen} onClose={() => setPluginManagerOpen(false)} onCreateNode={(type) => createNode(type)} />
+                {galleryOpen ? (
+                    <Suspense fallback={null}>
+                        <CanvasGenerationGalleryModal open={galleryOpen} onClose={() => setGalleryOpen(false)} onInsert={handleAssetInsert} onReuse={reuseGalleryParams} />
+                    </Suspense>
+                ) : null}
 
                 {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode!, crop)} /> : null}
 

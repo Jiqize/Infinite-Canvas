@@ -26,6 +26,7 @@ export function CanvasTopBar({
     onExportProject,
     onImportImage,
     onOpenPlugins,
+    onOpenGallery,
     onUndo,
     onRedo,
     agentOpen,
@@ -48,6 +49,7 @@ export function CanvasTopBar({
     onExportProject: () => void;
     onImportImage: () => void;
     onOpenPlugins: () => void;
+    onOpenGallery: () => void;
     onUndo: () => void;
     onRedo: () => void;
     agentOpen: boolean;
@@ -139,7 +141,7 @@ export function CanvasTopBar({
                 </div>
 
                 <div className="pointer-events-auto flex items-center gap-1.5">
-                    <UserStatusActions variant="canvas" onOpenShortcuts={() => setShortcutsOpen(true)} onOpenPlugins={onOpenPlugins} />
+                    <UserStatusActions variant="canvas" onOpenShortcuts={() => setShortcutsOpen(true)} onOpenPlugins={onOpenPlugins} onOpenGallery={onOpenGallery} />
                     <span className="h-6 w-px" style={{ background: theme.toolbar.border }} />
                     <Button
                         type="text"
