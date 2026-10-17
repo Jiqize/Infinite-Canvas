@@ -44,6 +44,8 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
     const isEditingExistingContent = hasTextContent || hasImageContent;
+    // 非覆盖模式下，生图会把节点自身的图作为参考一起发送，面板里同步展示
+    const selfImageNode = mode === "image" && hasImageContent && globalConfig.nodeRegenerateBehavior !== "overwrite" ? node : undefined;
     const [prompt, setPrompt] = useState(node.metadata?.composerContent ?? node.metadata?.prompt ?? "");
     const [expanded, setExpanded] = useState(false);
 
@@ -78,7 +80,7 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
             onPointerDown={(event) => event.stopPropagation()}
             onWheel={(event) => event.stopPropagation()}
         >
-            <CanvasNodeReferenceBar nodeId={node.id} nodes={nodes} connectedNodes={connectedNodes} onDisconnect={onDisconnectReference} onStartSelection={onStartReferenceSelection} />
+            <CanvasNodeReferenceBar nodeId={node.id} nodes={nodes} connectedNodes={connectedNodes} showIndex selfImageNode={selfImageNode} onDisconnect={onDisconnectReference} onStartSelection={onStartReferenceSelection} />
             <CanvasPromptChipInput
                 value={prompt}
                 references={mentionReferences}
@@ -147,7 +149,7 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
             </div>
             <Modal title={t("canvas.promptPanel.editorTitle")} open={expanded} centered width={760} footer={null} onCancel={() => setExpanded(false)} destroyOnHidden>
                 <div data-canvas-no-zoom className="pt-2" onWheelCapture={(event) => event.stopPropagation()}>
-                    <CanvasNodeReferenceBar nodeId={node.id} nodes={nodes} connectedNodes={connectedNodes} onDisconnect={onDisconnectReference} onStartSelection={(nodeId) => { setExpanded(false); onStartReferenceSelection?.(nodeId); }} />
+                    <CanvasNodeReferenceBar nodeId={node.id} nodes={nodes} connectedNodes={connectedNodes} showIndex selfImageNode={selfImageNode} onDisconnect={onDisconnectReference} onStartSelection={(nodeId) => { setExpanded(false); onStartReferenceSelection?.(nodeId); }} />
                     <CanvasPromptChipInput
                         value={prompt}
                         references={mentionReferences}

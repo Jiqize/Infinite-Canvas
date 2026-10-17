@@ -6,18 +6,27 @@ import { useTranslation } from "react-i18next";
 import { useCanvasTheme } from "@/hooks/use-canvas-theme";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { getGroupResourceNodes } from "@/lib/canvas/canvas-resource-references";
+import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { getImagePreviewRevision, previewUrlFor, subscribeImagePreviews } from "@/services/image-storage";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
-export function CanvasNodeReferenceBar({ nodeId, nodes, connectedNodes, onDisconnect, onStartSelection }: { nodeId: string; nodes: CanvasNodeData[]; connectedNodes: CanvasNodeData[]; onDisconnect?: (fromNodeId: string, toNodeId: string) => void; onStartSelection?: (nodeId: string) => void }) {
+// showIndex：按连接顺序给图片标「图1、图2…」，与发送给模型的编号一致；@ 引用模式按引用顺序重新编号，不显示
+export function CanvasNodeReferenceBar({ nodeId, nodes, connectedNodes, onDisconnect, onStartSelection, showIndex = false, selfImageNode }: { nodeId: string; nodes: CanvasNodeData[]; connectedNodes: CanvasNodeData[]; onDisconnect?: (fromNodeId: string, toNodeId: string) => void; onStartSelection?: (nodeId: string) => void; showIndex?: boolean; selfImageNode?: CanvasNodeData }) {
     const { t } = useTranslation();
     const theme = useCanvasTheme();
     const references = connectedNodes.flatMap((sourceNode) => (sourceNode.type === CanvasNodeType.Group ? getGroupResourceNodes(sourceNode.id, nodes) : [sourceNode]).map((node) => ({ node, sourceNodeId: sourceNode.id })));
+    let imageIndex = 0;
+    const imageLabels = new Map<string, string>();
+    for (const { node } of references) {
+        if (!imageLabels.has(node.id) && isImageReference(node)) imageLabels.set(node.id, imageReferenceLabel(imageIndex++));
+    }
     return (
         <div className="mb-2">
             <div className="mb-1.5 text-[11px] font-medium" style={{ color: theme.node.muted }}>{t("canvas.references.title")}</div>
             <div className="thin-scrollbar flex min-h-12 gap-2 overflow-x-auto pb-1">
-                {references.map(({ node, sourceNodeId }) => <ReferenceItem key={`${sourceNodeId}:${node.id}`} node={node} onRemove={() => onDisconnect?.(sourceNodeId, nodeId)} />)}
+                {references.map(({ node, sourceNodeId }) => <ReferenceItem key={`${sourceNodeId}:${node.id}`} node={node} label={showIndex ? imageLabels.get(node.id) : undefined} onRemove={() => onDisconnect?.(sourceNodeId, nodeId)} />)}
+                {/* 节点自身的图会作为最后一张参考图一起发送 */}
+                {selfImageNode ? <ReferenceItem node={selfImageNode} label={imageReferenceLabel(imageIndex)} caption={t("canvas.references.self")} /> : null}
                 <button type="button" className="grid size-12 shrink-0 place-items-center rounded-xl border bg-transparent transition hover:opacity-70" style={{ borderColor: theme.toolbar.border, color: theme.node.muted }} title={t("canvas.references.select")} onClick={() => onStartSelection?.(nodeId)}>
                     <Plus className="size-4" />
                 </button>
@@ -26,7 +35,11 @@ export function CanvasNodeReferenceBar({ nodeId, nodes, connectedNodes, onDiscon
     );
 }
 
-function ReferenceItem({ node, onRemove }: { node: CanvasNodeData; onRemove: () => void }) {
+function isImageReference(node: CanvasNodeData) {
+    return node.type === CanvasNodeType.Image ? Boolean(node.metadata?.content) : getNodeDefinition(node.type)?.resource?.(node)?.kind === "image";
+}
+
+function ReferenceItem({ node, label, caption, onRemove }: { node: CanvasNodeData; label?: string; caption?: string; onRemove?: () => void }) {
     const { t } = useTranslation();
     const theme = useCanvasTheme();
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision);
@@ -40,7 +53,9 @@ function ReferenceItem({ node, onRemove }: { node: CanvasNodeData; onRemove: () 
                 <span className="grid size-full place-items-center overflow-hidden rounded-[inherit]">
                     {(resource?.kind === "image" || node.type === CanvasNodeType.Image) && thumbnail ? <img src={thumbnail} alt="" className="size-full object-cover" /> : (resource?.kind === "video" || node.type === CanvasNodeType.Video) && content ? <video src={content} className="size-full object-cover" muted /> : <Icon className="size-4 opacity-65" />}
                 </span>
-                <button type="button" className="absolute right-0 top-0 grid size-5 place-items-center rounded-full border opacity-0 shadow-sm transition-opacity group-hover:opacity-100 focus-visible:opacity-100" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border }} aria-label={t("canvas.references.disconnect")} title={t("canvas.references.disconnect")} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onRemove(); }}><X className="size-3" /></button>
+                {label ? <span className="pointer-events-none absolute left-0.5 top-0.5 whitespace-nowrap rounded-md bg-black/65 px-1 text-[10px] font-medium leading-4 text-white">{label}</span> : null}
+                {caption ? <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate rounded-b-xl bg-black/55 text-center text-[9px] leading-3.5 text-white">{caption}</span> : null}
+                {onRemove ? <button type="button" className="absolute right-0 top-0 grid size-5 place-items-center rounded-full border opacity-0 shadow-sm transition-opacity group-hover:opacity-100 focus-visible:opacity-100" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border }} aria-label={t("canvas.references.disconnect")} title={t("canvas.references.disconnect")} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onRemove(); }}><X className="size-3" /></button> : null}
             </div>
         </Popover>
     );

@@ -1,6 +1,6 @@
 import type { AiTextMessage } from "@/services/api/image";
 import i18n from "@/i18n";
-import { imageReferenceLabel } from "@/lib/image-reference-prompt";
+import { imageReferenceInlineLabel, imageReferenceLabel } from "@/lib/image-reference-prompt";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
@@ -164,7 +164,7 @@ export function buildNodeResponseMessages(context: NodeGenerationContext): AiTex
     return [
         {
             role: "user",
-            content: [{ type: "text" as const, text: context.prompt }, ...context.referenceImages.map((image) => ({ type: "image_url" as const, image_url: { url: image.dataUrl } }))],
+            content: [...context.referenceImages.flatMap((image, index) => [{ type: "text" as const, text: imageReferenceInlineLabel(index) }, { type: "image_url" as const, image_url: { url: image.dataUrl } }]), { type: "text" as const, text: context.prompt }],
         },
     ];
 }

@@ -2418,7 +2418,8 @@ function InfiniteCanvasPage() {
                         isImageNode && sourceNode?.metadata?.content && !overwriteExisting
                             ? [{ id: sourceNode.id, name: `${sourceNode.title || sourceNode.id}.png`, type: sourceNode.metadata.mimeType || "image/png", dataUrl: sourceNode.metadata.content, storageKey: sourceNode.metadata.storageKey }]
                             : [];
-                    const referenceImages = [...new Map([...sourceReference, ...generationContext.referenceImages].map((image) => [image.id, image])).values()];
+                    // 节点自身的图放在连接的参考图之后，保证连接图的编号（图1、图2…）与面板角标、@ 引用一致
+                    const referenceImages = [...new Map([...generationContext.referenceImages, ...sourceReference].map((image) => [image.id, image])).values()];
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
                     const generationMetadata = buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages);
                     const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];

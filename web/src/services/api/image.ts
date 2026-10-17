@@ -5,7 +5,7 @@ import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, withLocalPr
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
-import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
+import { buildImageReferencePromptText, imageReferenceInlineLabel } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
 import { imageSizePresets, inferMediaScale } from "@/lib/media-size";
 import type { ReferenceImage } from "@/types/image";
@@ -660,10 +660,12 @@ async function requestGeminiImages(config: AiConfig, prompt: string, references:
 }
 
 async function requestGeminiImagesOnce(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
-    const parts: GeminiPart[] = [{ text: prompt }];
-    for (const image of references) {
-        parts.push(toGeminiImagePart(await imageToDataUrl(image)));
+    // 每张参考图前紧跟自己的编号（图1：<图>、图2：<图>），最后放提示词，模型按编号对应更准确
+    const parts: GeminiPart[] = [];
+    for (const [index, image] of references.entries()) {
+        parts.push({ text: imageReferenceInlineLabel(index) }, toGeminiImagePart(await imageToDataUrl(image)));
     }
+    parts.push({ text: prompt });
     const response = await axios.post<GeminiPayload>(
         geminiApiUrl(config, "generateContent"),
         {
@@ -778,7 +780,8 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
     if (requestConfig.apiFormat === "gemini") {
         try {
-            return await requestGeminiImages(requestConfig, requestPrompt, references, n, options);
+            // Gemini 已逐张标注编号，不再拼接编号前缀
+            return await requestGeminiImages(requestConfig, prompt, references, n, options);
         } catch (error) {
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
