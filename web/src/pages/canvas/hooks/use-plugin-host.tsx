@@ -40,8 +40,10 @@ export function usePluginHost(params: PluginHostParams) {
 
     // Host capabilities available to plugin nodes; methods receive nodeId and are not bound to a specific node.
     const pluginAi = useMemo<CanvasPluginAi>(() => {
+        // 插件传入的图片地址（data URL 或任意图片地址）统一转成 data URL 再发送
+        const toDataUrls = (refs: string[] | undefined, signal?: AbortSignal) => Promise.all((refs || []).filter(Boolean).map((src) => (src.startsWith("data:") ? src : imageToDataUrl({ url: src }, { signal }))));
         // Convert plugin reference images (data URLs or URLs) into the ReferenceImage[] expected by the host generation API.
-        const toReferences = (refs?: string[]): ReferenceImage[] => (refs || []).filter(Boolean).map((src, index) => ({ id: `plugin-ref-${index}`, name: `ref-${index}.png`, type: "image/png", dataUrl: src }));
+        const toReferences = async (refs: string[] | undefined, signal?: AbortSignal): Promise<ReferenceImage[]> => (await toDataUrls(refs, signal)).map((src, index) => ({ id: `plugin-ref-${index}`, name: `ref-${index}.png`, type: src.match(/^data:([^;,]+)/)?.[1] || "image/png", dataUrl: src }));
         // Open the configuration dialog and throw when AI is not configured, allowing the plugin to handle the error.
         const ensureReady = (config: AiConfig) => {
             if (!isAiConfigReady(config, config.model)) {
@@ -53,7 +55,7 @@ export function usePluginHost(params: PluginHostParams) {
             generateImage: async (prompt, options) => {
                 const config = { ...buildGenerationConfig(effectiveConfig, undefined, "image"), count: String(options?.count || 1), ...(options?.model ? { model: options.model } : {}), ...(options?.size ? { size: options.size } : {}) };
                 ensureReady(config);
-                const references = toReferences(options?.references);
+                const references = await toReferences(options?.references, options?.signal);
                 const items = references.length ? await requestEdit(config, prompt, references, { signal: options?.signal }) : await requestGeneration(config, prompt, { signal: options?.signal });
                 const images = await Promise.all(items.map(async (item) => {
                     try {
@@ -73,13 +75,16 @@ export function usePluginHost(params: PluginHostParams) {
                     ...(options?.seconds ? { videoSeconds: options.seconds } : {}),
                 };
                 ensureReady(config);
-                const file = await storeGeneratedVideo(await requestVideoGeneration(config, prompt, toReferences(options?.references), { signal: options?.signal }));
+                const file = await storeGeneratedVideo(await requestVideoGeneration(config, prompt, await toReferences(options?.references, options?.signal), { signal: options?.signal }));
                 return { url: file.url, mimeType: file.mimeType, width: file.width, height: file.height, durationMs: file.durationMs };
             },
             generateText: async (prompt, options) => {
                 const config = { ...buildGenerationConfig(effectiveConfig, undefined, "text"), ...(options?.model ? { model: options.model } : {}) };
                 ensureReady(config);
-                const messages: AiTextMessage[] = [...(options?.system ? [{ role: "system" as const, content: options.system }] : []), { role: "user" as const, content: prompt }];
+                const images = await toDataUrls(options?.images, options?.signal);
+                // 带图时 user 消息改为「文本 + 图片」多段内容；不带图时保持纯文本
+                const userContent: AiTextMessage["content"] = images.length ? [{ type: "text", text: prompt }, ...images.map((url) => ({ type: "image_url" as const, image_url: { url } }))] : prompt;
+                const messages: AiTextMessage[] = [...(options?.system ? [{ role: "system" as const, content: options.system }] : []), { role: "user" as const, content: userContent }];
                 const text = await requestImageQuestion(config, messages, (delta) => options?.onDelta?.(delta), { signal: options?.signal });
                 return { text };
             },

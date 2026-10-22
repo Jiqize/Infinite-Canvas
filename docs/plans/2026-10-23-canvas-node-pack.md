@@ -65,11 +65,11 @@ Spec：`docs/specs/2026-10-23-canvas-node-pack.md`
 - `gridPositions(..., 5, ..., {columns: 5})` → 5 个点同一行。
 - `buildImageNodeOps("s", 2 项, ...)` → 2 个 add_node + 2 个 connect_nodes，from 均为 `s`。
 
-- [ ] **Step 1: 按上述 cases 写失败测试**
-- [ ] **Step 2: 运行确认失败**：`cd web && bun test tests/plugin-resource-references.test.ts`；`cd plugins/canvas/sdk && bun test`，预期 FAIL
-- [ ] **Step 3: 最小实现使其通过**
-- [ ] **Step 4: 运行确认通过**：同上命令 PASS；`cd web && bun run typecheck` 无错误；浏览器里刷新验证 data URL 图片节点持久化
-- [ ] **Step 5: Commit**
+- [x] **Step 1: 按上述 cases 写失败测试**
+- [x] **Step 2: 运行确认失败**：`cd web && bun test tests/plugin-resource-references.test.ts`；`cd plugins/canvas/sdk && bun test`，预期 FAIL
+- [x] **Step 3: 最小实现使其通过**
+- [x] **Step 4: 运行确认通过**：同上命令 PASS；`cd web && bun run typecheck` 无错误；浏览器里刷新验证 data URL 图片节点持久化
+- [x] **Step 5: Commit**
 
 ### Task 2: 对比节点（compare）+ 新插件登记方式
 
@@ -279,3 +279,5 @@ Spec：`docs/specs/2026-10-23-canvas-node-pack.md`
 ## 进展备注
 
 （每完成一个任务在此追加一行）
+
+- 2026-10-23 Task 1 完成：多图资源/文本带图/参考图转 data URL 落地，SDK 新增 canvas-utils；另加 `ctx.getResource`（SDK 侧可选）供 getUpstreamImages 读插件资源，生成链路 canvas-node-generation 同步展开多图；data URL 图片节点持久化经代码确认无需改动（未浏览器实测）。

@@ -31,14 +31,15 @@ export async function resolveCanvasReferenceImages(references: CanvasResourceRef
     return Promise.all(references.filter((reference) => reference.kind === "image").map(async (reference) => {
         const node = nodesById.get(reference.nodeId);
         if (!node) throw new Error(i18n.t("agent.composer.mentions.resourceMissing", { title: reference.title }));
-        const metadata = node.metadata;
+        // 多图插件资源的单张引用（id 为 <nodeId>#<i>）不共用节点自身的存储与尺寸信息
+        const metadata = reference.id === node.id ? node.metadata : undefined;
         const dataUrl = await imageToDataUrl({ storageKey: metadata?.storageKey, url: reference.previewUrl });
         if (!dataUrl.startsWith("data:image/")) throw new Error(i18n.t("agent.composer.mentions.imageReadFailed", { title: reference.title }));
         const meta = metadata?.naturalWidth && metadata.naturalHeight
             ? { width: metadata.naturalWidth, height: metadata.naturalHeight, mimeType: metadata.mimeType || dataUrl.match(/^data:([^;]+)/)?.[1] || "image/png" }
             : await readImageMeta(dataUrl);
         return {
-            id: `canvas:${node.id}`,
+            id: `canvas:${reference.id}`,
             name: reference.title,
             type: metadata?.mimeType || meta.mimeType,
             size: metadata?.bytes || getDataUrlByteSize(dataUrl),
@@ -103,6 +104,16 @@ function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
         const kind = resourceKind(node);
         if (!kind) return [];
         const resource = getNodeDefinition(node.type)?.resource?.(node);
+        // 插件资源输出多图时展开为多条图片引用，带 text 再追加一条文本引用
+        if (kind === "image" && resource?.urls?.length) {
+            const images = resource.urls.map((url, i): CanvasResourceReference => {
+                const label = labelForKind("image", counts.image++);
+                return { id: `${node.id}#${i}`, nodeId: node.id, kind: "image", label, title: node.title || label, previewUrl: url, active };
+            });
+            if (!resource.text) return images;
+            const label = labelForKind("text", counts.text++);
+            return [...images, { id: `${node.id}#text`, nodeId: node.id, kind: "text", label, title: node.title || label, text: resource.text, active }];
+        }
         const index = counts[kind]++;
         const label = labelForKind(kind, index);
         return [

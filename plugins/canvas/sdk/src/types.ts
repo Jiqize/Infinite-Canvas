@@ -133,7 +133,8 @@ export type CanvasAgentOp =
 // ---------------------------------------------------------------------------
 
 export type CanvasResourceKind = "image" | "video" | "audio" | "text";
-export type CanvasNodeResource = { kind: CanvasResourceKind; text?: string; url?: string };
+// kind 为 image 时可用 urls 输出多张图(优先于 url);同时带 text 会额外追加一条文本引用
+export type CanvasNodeResource = { kind: CanvasResourceKind; text?: string; url?: string; urls?: string[] };
 
 // ---------------------------------------------------------------------------
 // AI 生成:插件直接复用宿主的模型/密钥配置发起生成(生图/生视频/生文本/生音频)
@@ -177,6 +178,7 @@ export type GenerateTextOptions = {
     signal?: AbortSignal;
     model?: string;
     system?: string; // 附加系统提示词(拼在宿主系统提示之后)
+    images?: string[]; // 随提示词发送给多模态文本模型的图片(dataURL 或可访问 URL)
     onDelta?: (text: string) => void; // 流式增量回调
 };
 
@@ -223,6 +225,8 @@ export type CanvasNodeContext = {
     getConnections: () => CanvasConnection[];
     getUpstream: () => CanvasNodeData[];
     getDownstream: () => CanvasNodeData[];
+    // 读取任意节点作为上游时输出的插件资源;旧版宿主没有此能力,因此为可选
+    getResource?: (id: string) => CanvasNodeResource | null;
     // 画布操作(复用 Agent 指令集)
     applyOps: (ops: CanvasAgentOp[]) => void;
     // 节点间/插件间通信

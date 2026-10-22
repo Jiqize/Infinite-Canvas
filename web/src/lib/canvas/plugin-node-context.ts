@@ -1,5 +1,5 @@
 import { createPluginStorage, emitCanvasEvent, onCanvasEvent } from "@/lib/canvas/canvas-event-bus";
-import { getNodePluginId } from "@/lib/canvas/node-registry";
+import { getNodeDefinition, getNodePluginId } from "@/lib/canvas/node-registry";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { CanvasNodeContext, CanvasPluginHost } from "@/types/canvas-plugin";
@@ -19,6 +19,10 @@ export function buildNodeContext(host: CanvasPluginHost, node: CanvasNodeData, t
         getConnections: () => host.getConnections(),
         getUpstream: () => host.getUpstream(node.id),
         getDownstream: () => host.getDownstream(node.id),
+        getResource: (id) => {
+            const target = host.getNode(id);
+            return (target && getNodeDefinition(target.type)?.resource?.(target)) || null;
+        },
         applyOps: (ops) => host.applyOps(ops),
         emit: (event, payload) => emitCanvasEvent(event, payload),
         on: (event, handler) => onCanvasEvent(event, handler),

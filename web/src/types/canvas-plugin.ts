@@ -6,7 +6,8 @@ import type { CanvasConnection, CanvasNodeData, CanvasNodeMetadata } from "@/typ
 import type { CanvasResourceKind } from "@/lib/canvas/canvas-resource-references";
 
 // Resource emitted when a plugin node is consumed as an upstream input.
-export type CanvasNodeResource = { kind: CanvasResourceKind; text?: string; url?: string };
+// kind 为 image 时可用 urls 输出多张图（优先于 url），同时带 text 会额外追加一条文本引用。
+export type CanvasNodeResource = { kind: CanvasResourceKind; text?: string; url?: string; urls?: string[] };
 
 // AI generation capabilities injected by the host, reusing its model and credential configuration.
 export type GenerateOptions = { signal?: AbortSignal; references?: string[]; model?: string };
@@ -14,7 +15,8 @@ export type GenerateImageOptions = GenerateOptions & { count?: number; size?: st
 export type GenerateImageResult = { images: string[] };
 export type GenerateVideoOptions = GenerateOptions & { size?: string; seconds?: string };
 export type GenerateVideoResult = { url: string; mimeType: string; width?: number; height?: number; durationMs?: number };
-export type GenerateTextOptions = { signal?: AbortSignal; model?: string; system?: string; onDelta?: (text: string) => void };
+// images：随提示词一起发给多模态文本模型的图片（data URL 或图片地址）。
+export type GenerateTextOptions = { signal?: AbortSignal; model?: string; system?: string; images?: string[]; onDelta?: (text: string) => void };
 export type GenerateTextResult = { text: string };
 export type PluginModelCapability = "image" | "video" | "text" | "audio";
 export type ModelOption = { value: string; label: string };
@@ -53,6 +55,8 @@ export type CanvasNodeContext = {
     getConnections: () => CanvasConnection[];
     getUpstream: () => CanvasNodeData[];
     getDownstream: () => CanvasNodeData[];
+    // 读取任意节点作为上游时输出的插件资源（无 resource 定义时为 null）。
+    getResource: (id: string) => CanvasNodeResource | null;
     // Canvas operations using the Agent instruction set for nodes, connections, selection, viewport, and generation.
     applyOps: (ops: CanvasAgentOp[]) => void;
     // Inter-node and inter-plugin communication.

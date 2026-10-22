@@ -131,7 +131,9 @@ export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[
             const children = getGroupResourceNodes(node.id, nodes).flatMap(readNodeGenerationResource);
             return children.length ? [{ nodeId: node.id, type: "group", title: node.title, children }] : [];
         }
-        return readNodeGenerationResource(node);
+        const resources = readNodeGenerationResource(node);
+        // 多图插件资源按组输入处理，@ 引用该节点时整体展开
+        return resources.length > 1 ? [{ nodeId: node.id, type: "group", title: node.title, children: resources }] : resources;
     });
 }
 
@@ -148,6 +150,10 @@ function readNodeGenerationResource(node: CanvasNodeData): NodeGenerationResourc
     const audio = readReferenceAudio(node);
     if (audio) return [{ nodeId: node.id, type: "audio", title: node.title, audio }];
     const resource = getNodeDefinition(node.type)?.resource?.(node);
+    if (resource?.kind === "image" && resource.urls?.length) {
+        const images = resource.urls.map((url, index): NodeGenerationResourceInput => ({ nodeId: `${node.id}#${index}`, type: "image", title: node.title, image: { id: `${node.id}#${index}`, name: `${node.title || node.id}-${index + 1}.png`, type: "image/png", dataUrl: url } }));
+        return resource.text ? [...images, { nodeId: `${node.id}#text`, type: "text", title: node.title, text: resource.text }] : images;
+    }
     if (resource?.kind === "image" && resource.url) return [{ nodeId: node.id, type: "image", title: node.title, image: { id: node.id, name: `${node.title || node.id}.png`, type: node.metadata?.mimeType || "image/png", dataUrl: resource.url, storageKey: node.metadata?.storageKey } }];
     if (resource?.kind === "video" && resource.url) return [{ nodeId: node.id, type: "video", title: node.title, video: { id: node.id, name: `${node.title || node.id}.mp4`, type: node.metadata?.mimeType || "video/mp4", url: resource.url, storageKey: node.metadata?.storageKey } }];
     if (resource?.kind === "audio" && resource.url) return [{ nodeId: node.id, type: "audio", title: node.title, audio: { id: node.id, name: `${node.title || node.id}.mp3`, type: node.metadata?.mimeType || "audio/mpeg", url: resource.url, storageKey: node.metadata?.storageKey } }];

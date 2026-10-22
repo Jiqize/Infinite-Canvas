@@ -6,3 +6,5 @@
 export * from "./types";
 export { definePlugin } from "./define-plugin";
 export { getReact, getRuntime, useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef, useReducer, useContext, useId } from "./runtime";
+export { gridPositions, buildImageNodeOps, getUpstreamImages, getUpstreamText, readImageSize } from "./canvas-utils";
+export type { GridOptions, ImageNodeItem, ImageNodeOpsOptions } from "./canvas-utils";
