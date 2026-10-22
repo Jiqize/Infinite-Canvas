@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { useCanvasTheme } from "@/hooks/use-canvas-theme";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
-import { getGroupResourceNodes } from "@/lib/canvas/canvas-resource-references";
+import { buildReferenceBarItems } from "@/lib/canvas/canvas-resource-references";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { getImagePreviewRevision, previewUrlFor, subscribeImagePreviews } from "@/services/image-storage";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -14,17 +14,13 @@ import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 export function CanvasNodeReferenceBar({ nodeId, nodes, connectedNodes, onDisconnect, onStartSelection, showIndex = false, selfImageNode }: { nodeId: string; nodes: CanvasNodeData[]; connectedNodes: CanvasNodeData[]; onDisconnect?: (fromNodeId: string, toNodeId: string) => void; onStartSelection?: (nodeId: string) => void; showIndex?: boolean; selfImageNode?: CanvasNodeData }) {
     const { t } = useTranslation();
     const theme = useCanvasTheme();
-    const references = connectedNodes.flatMap((sourceNode) => (sourceNode.type === CanvasNodeType.Group ? getGroupResourceNodes(sourceNode.id, nodes) : [sourceNode]).map((node) => ({ node, sourceNodeId: sourceNode.id })));
-    let imageIndex = 0;
-    const imageLabels = new Map<string, string>();
-    for (const { node } of references) {
-        if (!imageLabels.has(node.id) && isImageReference(node)) imageLabels.set(node.id, imageReferenceLabel(imageIndex++));
-    }
+    const references = buildReferenceBarItems(connectedNodes, nodes);
+    const imageIndex = new Set(references.flatMap((item) => (item.label ? [item.label] : []))).size;
     return (
         <div className="mb-2">
             <div className="mb-1.5 text-[11px] font-medium" style={{ color: theme.node.muted }}>{t("canvas.references.title")}</div>
             <div className="thin-scrollbar flex min-h-12 gap-2 overflow-x-auto pb-1">
-                {references.map(({ node, sourceNodeId }) => <ReferenceItem key={`${sourceNodeId}:${node.id}`} node={node} label={showIndex ? imageLabels.get(node.id) : undefined} onRemove={() => onDisconnect?.(sourceNodeId, nodeId)} />)}
+                {references.map(({ key, node, sourceNodeId, label, imageUrl }) => <ReferenceItem key={key} node={node} imageUrl={imageUrl} label={showIndex ? label : undefined} onRemove={() => onDisconnect?.(sourceNodeId, nodeId)} />)}
                 {/* 节点自身的图会作为最后一张参考图一起发送 */}
                 {selfImageNode ? <ReferenceItem node={selfImageNode} label={imageReferenceLabel(imageIndex)} caption={t("canvas.references.self")} /> : null}
                 <button type="button" className="grid size-12 shrink-0 place-items-center rounded-xl border bg-transparent transition hover:opacity-70" style={{ borderColor: theme.toolbar.border, color: theme.node.muted }} title={t("canvas.references.select")} onClick={() => onStartSelection?.(nodeId)}>
@@ -35,17 +31,14 @@ export function CanvasNodeReferenceBar({ nodeId, nodes, connectedNodes, onDiscon
     );
 }
 
-function isImageReference(node: CanvasNodeData) {
-    return node.type === CanvasNodeType.Image ? Boolean(node.metadata?.content) : getNodeDefinition(node.type)?.resource?.(node)?.kind === "image";
-}
-
-function ReferenceItem({ node, label, caption, onRemove }: { node: CanvasNodeData; label?: string; caption?: string; onRemove?: () => void }) {
+// imageUrl：插件多图资源中的单张图，优先于节点自身内容
+function ReferenceItem({ node, imageUrl, label, caption, onRemove }: { node: CanvasNodeData; imageUrl?: string; label?: string; caption?: string; onRemove?: () => void }) {
     const { t } = useTranslation();
     const theme = useCanvasTheme();
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision);
     const resource = getNodeDefinition(node.type)?.resource?.(node);
-    const content = node.metadata?.content || resource?.url;
-    const thumbnail = previewUrlFor(node.metadata?.storageKey) || content;
+    const content = imageUrl || node.metadata?.content || resource?.url;
+    const thumbnail = imageUrl || previewUrlFor(node.metadata?.storageKey) || content;
     const Icon = resource?.kind === "image" || node.type === CanvasNodeType.Image ? ImageIcon : resource?.kind === "video" || node.type === CanvasNodeType.Video ? Video : resource?.kind === "audio" || node.type === CanvasNodeType.Audio ? Music2 : resource?.kind === "text" || node.type === CanvasNodeType.Text ? FileText : Puzzle;
     return (
         <Popover placement="topLeft" mouseEnterDelay={0.15} content={<ReferencePreview node={node} content={content} />}>

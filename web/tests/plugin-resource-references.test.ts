@@ -78,3 +78,14 @@ test("generation context keeps a single-url plugin resource unchanged", () => {
     expect(context.referenceImages.length).toBe(1);
     expect(context.referenceImages[0].id).toBe("p");
 });
+
+test("reference bar expands plugin multi-image resources and keeps numbering continuous", async () => {
+    const { buildReferenceBarItems } = await import("../src/lib/canvas/canvas-resource-references");
+    const { nodes, target } = setup({ kind: "image", urls: ["data:image/png;base64,a", "data:image/png;base64,b"] });
+    const image: CanvasNodeData = { id: "i", type: CanvasNodeType.Image, title: "图", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { content: "data:image/png;base64,c" } };
+    const items = buildReferenceBarItems([nodes[0], image], [...nodes, image]);
+    expect(items.map((item) => item.key)).toEqual(["p:p#0", "p:p#1", "i:i"]);
+    expect(items.map((item) => item.label)).toEqual(["图1", "图2", "图3"]);
+    expect(items.map((item) => item.imageUrl)).toEqual(["data:image/png;base64,a", "data:image/png;base64,b", undefined]);
+    expect(items.every((item) => item.node.id !== target.id)).toBe(true);
+});

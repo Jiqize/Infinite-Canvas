@@ -51,6 +51,28 @@ export async function resolveCanvasReferenceImages(references: CanvasResourceRef
     }));
 }
 
+export type ReferenceBarItem = { key: string; node: CanvasNodeData; sourceNodeId: string; label?: string; imageUrl?: string };
+
+// 参考栏条目：组展开成员，插件多图资源展开为每张一条；图片按顺序编号「图1、图2…」，与发送给模型的编号一致
+export function buildReferenceBarItems(connectedNodes: CanvasNodeData[], nodes: CanvasNodeData[]): ReferenceBarItem[] {
+    const labels = new Map<string, string>();
+    let imageIndex = 0;
+    const label = (id: string) => {
+        if (!labels.has(id)) labels.set(id, imageReferenceLabel(imageIndex++));
+        return labels.get(id);
+    };
+    return connectedNodes.flatMap((sourceNode) =>
+        (sourceNode.type === CanvasNodeType.Group ? getGroupResourceNodes(sourceNode.id, nodes) : [sourceNode]).flatMap((node): ReferenceBarItem[] => {
+            const resource = node.type === CanvasNodeType.Image ? undefined : getNodeDefinition(node.type)?.resource?.(node);
+            if (resource?.kind === "image" && resource.urls?.length) {
+                return resource.urls.map((url, i) => ({ key: `${sourceNode.id}:${node.id}#${i}`, node, sourceNodeId: sourceNode.id, label: label(`${node.id}#${i}`), imageUrl: url }));
+            }
+            const isImage = node.type === CanvasNodeType.Image ? Boolean(node.metadata?.content) : resource?.kind === "image";
+            return [{ key: `${sourceNode.id}:${node.id}`, node, sourceNodeId: sourceNode.id, label: isImage ? label(node.id) : undefined }];
+        }),
+    );
+}
+
 export function getMentionResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
     const configInputs = expandGroupResourceNodes(getConnectedConfigInputNodes(nodeId, nodes, connections), nodes);
     if (configInputs.length) return configInputs;
