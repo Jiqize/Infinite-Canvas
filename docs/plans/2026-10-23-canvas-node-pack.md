@@ -116,7 +116,7 @@ Spec：`docs/specs/2026-10-23-canvas-node-pack.md`
 - 3 张、2 列 → 2 行，第 3 格在第二行第一列。
 - 0 张 → 宽高 0、cells 为空。
 
-- [ ] **Step 1–5**：同 Task 2 流程；浏览器验收：连 4 张图、2 列导出，得到新图片节点且排版一致
+- [x] **Step 1–5**：同 Task 2 流程；浏览器验收：连 4 张图、2 列导出，得到新图片节点且排版一致
 
 ### Task 4: 提示词助手节点（prompt-assistant）
 
@@ -282,3 +282,4 @@ Spec：`docs/specs/2026-10-23-canvas-node-pack.md`
 
 - 2026-10-23 Task 1 完成：多图资源/文本带图/参考图转 data URL 落地，SDK 新增 canvas-utils；另加 `ctx.getResource`（SDK 侧可选）供 getUpstreamImages 读插件资源，生成链路 canvas-node-generation 同步展开多图；data URL 图片节点持久化经代码确认无需改动（未浏览器实测）。
 - 2026-10-23 Task 2 完成：对比节点（滑块/并排，模式存 compareMode）；no-zoom 与 mousedown 拦截只加在交互控件上以保留节点拖动；浏览器验收并入 Task 10。
+- 2026-10-23 Task 3 完成：拼图合成节点（网格排版、拖动排序、canvas 导出 PNG）；实际列数取 min(列数, 张数)，固定比例也按 cellWidth 1024 导出；浏览器验收并入 Task 10。
