@@ -24,6 +24,7 @@ const OFFICIAL = [
     { id: "collage", dir: "collage", name: "拼图合成节点", description: "上游图片按网格排版导出为一张图", icon: "🧩" },
     { id: "prompt-assistant", dir: "prompt-assistant", name: "提示词助手节点", description: "扩写、精简、翻译、服装描述，支持看图", icon: "🪄" },
     { id: "batch-list", dir: "batch-list", name: "列表批量节点", description: "变量组合批量出图", icon: "📋" },
+    { id: "grid-shots", dir: "grid-shots", name: "宫格节点", description: "多机位九宫格、剧情四宫格、三视图并自动切分", icon: "🔲" },
 ];
 
 // 读取插件 package.json 的 version 作为清单版本的唯一来源
