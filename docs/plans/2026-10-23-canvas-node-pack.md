@@ -213,7 +213,7 @@ Spec：`docs/specs/2026-10-23-canvas-node-pack.md`
 - seconds 缺失或非数字 → 默认 5。
 - `buildShotPrompt` 输出包含 framing 与 description。
 
-- [ ] **Step 1–5**：同 Task 2 流程；浏览器验收：剧本 → 分镜表；勾 3 行出 3 张带镜号图；勾 1 行出 1 个视频节点
+- [x] **Step 1–5**：同 Task 2 流程；浏览器验收：剧本 → 分镜表；勾 3 行出 3 张带镜号图；勾 1 行出 1 个视频节点
 
 ### Task 8: 主体节点（subject）
 
@@ -286,3 +286,4 @@ Spec：`docs/specs/2026-10-23-canvas-node-pack.md`
 - 2026-10-23 Task 4 完成：提示词助手节点（5 种模式、流式、可取消）；宿主 onDelta 实为累计文本，插件按累计覆盖；仅有图时发兜底提示词；浏览器验收并入 Task 10。
 - 2026-10-23 Task 5 完成：列表批量节点（变量组合、并发 3、单条重试、取消）；设置存 batchModel/batchSize/batchCount 以免与宿主生成设置冲突；浏览器验收并入 Task 10。
 - 2026-10-23 Task 6 完成：宫格节点（4 个预设、生成大图后 canvas 切分铺图）；尺寸下拉为插件内置固定选项；浏览器验收并入 Task 10。
+- 2026-10-23 Task 7 完成：分镜脚本节点（拆分镜 JSON、可编辑表格、批量出图/出视频）；hidePanel、出视频也并发 3、勾选不持久化；浏览器验收并入 Task 10。
