@@ -1,7 +1,7 @@
 # PROJECT
 - 状态：进行中
-- 当前阶段：画布新节点包（8 个官方插件）— spec 与 plan 已定
-- 最近完成：节点包 Task 1（宿主多图资源、文本带图、SDK canvas-utils）；节点管理器；生成画廊；节点生成设置记忆；参考图编号（面板角标「图1/图2」、Gemini 图文交替逐张标号、编号与 @ 引用一致）
-- 下一步：按 docs/plans/2026-10-23-canvas-node-pack.md 继续 Task 2（对比节点）；真实生图/生视频下验收画廊；跟进 PR #294/#295 评审
-- 使用工具：Claude Code（Bash、Edit、Write、Playwright MCP、gh、ego-browser）
+- 当前阶段：画布新节点包（8 个官方插件）— 开发完成，待真实生成验收
+- 最近完成：节点包 Task 2–10：8 个插件登记构建、本地发现、浏览器启停验收；修复参考栏多图资源展开
+- 下一步：配置模型 Key 后验收列表批量、提示词助手、宫格、分镜脚本的真实生成（spec 验收 3/4/7/8）；跟进 PR #294/#295 评审
+- 使用工具：Claude Code（Bash、Edit、Write、Playwright MCP、gh、ego-browser、workflow 子代理）
 - 最后更新：2026-10-23
