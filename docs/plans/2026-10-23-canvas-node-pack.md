@@ -141,7 +141,7 @@ Spec：`docs/specs/2026-10-23-canvas-node-pack.md`
 - `buildAssistantRequest("custom", "a", "b", "S")` → system 为 `S`，prompt 含 `a` 与 `b`。
 - 上游与说明均为空 → prompt 为空字符串。
 
-- [ ] **Step 1–5**：同 Task 2 流程；浏览器验收：连 1 图 + 1 文本选「服装描述」得到文本，连到图片节点生成时提示词包含该文本
+- [x] **Step 1–5**：同 Task 2 流程；浏览器验收：连 1 图 + 1 文本选「服装描述」得到文本，连到图片节点生成时提示词包含该文本
 
 ### Task 5: 列表批量节点（batch-list）
 
@@ -283,3 +283,4 @@ Spec：`docs/specs/2026-10-23-canvas-node-pack.md`
 - 2026-10-23 Task 1 完成：多图资源/文本带图/参考图转 data URL 落地，SDK 新增 canvas-utils；另加 `ctx.getResource`（SDK 侧可选）供 getUpstreamImages 读插件资源，生成链路 canvas-node-generation 同步展开多图；data URL 图片节点持久化经代码确认无需改动（未浏览器实测）。
 - 2026-10-23 Task 2 完成：对比节点（滑块/并排，模式存 compareMode）；no-zoom 与 mousedown 拦截只加在交互控件上以保留节点拖动；浏览器验收并入 Task 10。
 - 2026-10-23 Task 3 完成：拼图合成节点（网格排版、拖动排序、canvas 导出 PNG）；实际列数取 min(列数, 张数)，固定比例也按 cellWidth 1024 导出；浏览器验收并入 Task 10。
+- 2026-10-23 Task 4 完成：提示词助手节点（5 种模式、流式、可取消）；宿主 onDelta 实为累计文本，插件按累计覆盖；仅有图时发兜底提示词；浏览器验收并入 Task 10。
