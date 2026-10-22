@@ -166,7 +166,7 @@ Spec：`docs/specs/2026-10-23-canvas-node-pack.md`
 - 无变量 → `[{}]`。
 - `fillTemplate("{a} 穿 {b} 在 {c}", {a:"模特",b:"西装"})` → `"模特 穿 西装 在 {c}"`。
 
-- [ ] **Step 1–5**：同 Task 2 流程；浏览器验收：2×3 变量显示 9，运行后 9 个图片节点、标题与连线正确
+- [x] **Step 1–5**：同 Task 2 流程；浏览器验收：2×3 变量显示 9，运行后 9 个图片节点、标题与连线正确
 
 ### Task 6: 宫格节点（grid-shots）
 
@@ -284,3 +284,4 @@ Spec：`docs/specs/2026-10-23-canvas-node-pack.md`
 - 2026-10-23 Task 2 完成：对比节点（滑块/并排，模式存 compareMode）；no-zoom 与 mousedown 拦截只加在交互控件上以保留节点拖动；浏览器验收并入 Task 10。
 - 2026-10-23 Task 3 完成：拼图合成节点（网格排版、拖动排序、canvas 导出 PNG）；实际列数取 min(列数, 张数)，固定比例也按 cellWidth 1024 导出；浏览器验收并入 Task 10。
 - 2026-10-23 Task 4 完成：提示词助手节点（5 种模式、流式、可取消）；宿主 onDelta 实为累计文本，插件按累计覆盖；仅有图时发兜底提示词；浏览器验收并入 Task 10。
+- 2026-10-23 Task 5 完成：列表批量节点（变量组合、并发 3、单条重试、取消）；设置存 batchModel/batchSize/batchCount 以免与宿主生成设置冲突；浏览器验收并入 Task 10。

@@ -23,6 +23,7 @@ const OFFICIAL = [
     { id: "compare", dir: "compare", name: "对比节点", description: "两张图片滑块或并排对比", icon: "🔀" },
     { id: "collage", dir: "collage", name: "拼图合成节点", description: "上游图片按网格排版导出为一张图", icon: "🧩" },
     { id: "prompt-assistant", dir: "prompt-assistant", name: "提示词助手节点", description: "扩写、精简、翻译、服装描述，支持看图", icon: "🪄" },
+    { id: "batch-list", dir: "batch-list", name: "列表批量节点", description: "变量组合批量出图", icon: "📋" },
 ];
 
 // 读取插件 package.json 的 version 作为清单版本的唯一来源
