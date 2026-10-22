@@ -91,9 +91,9 @@ Spec：`docs/specs/2026-10-23-canvas-node-pack.md`
 - `clampPercent(-5) → 0`，`clampPercent(130) → 100`（`src/logic.ts`）。
 - `npm run build` 产出 `dist/compare.js`；registry `npm run build` 的清单含 `compare`。
 
-- [ ] **Step 1: 写失败测试** - [ ] **Step 2: 确认失败**：`cd plugins/canvas/compare && bun test` FAIL
-- [ ] **Step 3: 实现** - [ ] **Step 4: 确认通过**：`bun test` PASS、`npm run typecheck`、`npm run build`、`cd ../registry && npm run build` 清单含 compare；浏览器启用节点后可见于新建菜单，停用后消失
-- [ ] **Step 5: Commit**
+- [x] **Step 1: 写失败测试** - [x] **Step 2: 确认失败**：`cd plugins/canvas/compare && bun test` FAIL
+- [x] **Step 3: 实现** - [x] **Step 4: 确认通过**：`bun test` PASS、`npm run typecheck`、`npm run build`、`cd ../registry && npm run build` 清单含 compare；浏览器启用节点后可见于新建菜单，停用后消失
+- [x] **Step 5: Commit**
 
 ### Task 3: 拼图合成节点（collage）
 
@@ -281,3 +281,4 @@ Spec：`docs/specs/2026-10-23-canvas-node-pack.md`
 （每完成一个任务在此追加一行）
 
 - 2026-10-23 Task 1 完成：多图资源/文本带图/参考图转 data URL 落地，SDK 新增 canvas-utils；另加 `ctx.getResource`（SDK 侧可选）供 getUpstreamImages 读插件资源，生成链路 canvas-node-generation 同步展开多图；data URL 图片节点持久化经代码确认无需改动（未浏览器实测）。
+- 2026-10-23 Task 2 完成：对比节点（滑块/并排，模式存 compareMode）；no-zoom 与 mousedown 拦截只加在交互控件上以保留节点拖动；浏览器验收并入 Task 10。

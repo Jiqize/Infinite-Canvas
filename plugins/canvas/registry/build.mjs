@@ -20,6 +20,7 @@ const OFFICIAL = [
     { id: "html", dir: "html", name: "HTML 节点", description: "沙箱 iframe 渲染 HTML,支持 {{input}} 注入上游文本", icon: "🌐" },
     { id: "panorama", dir: "panorama", name: "3D 全景节点", description: "查看 360° 等距柱状全景图,可从上游图片节点取图", icon: "🧭" },
     { id: "sticky-note", dir: "sticky-note", name: "便利贴节点", description: "可自选颜色、双击编辑、拖动即可移动的便利贴", icon: "📌" },
+    { id: "compare", dir: "compare", name: "对比节点", description: "两张图片滑块或并排对比", icon: "🔀" },
 ];
 
 // 读取插件 package.json 的 version 作为清单版本的唯一来源
