@@ -236,7 +236,7 @@ Spec：`docs/specs/2026-10-23-canvas-node-pack.md`
 - `removeSubject(list, id)` 删除对应项。
 - `addImage(images, url)` 第 5 张时返回错误「最多 4 张参考图」。
 
-- [ ] **Step 1–5**：同 Task 2 流程；浏览器验收：2 图主体存库 → 另一画布载入 → 连到生成节点，请求带 2 张参考图
+- [x] **Step 1–5**：同 Task 2 流程；浏览器验收：2 图主体存库 → 另一画布载入 → 连到生成节点，请求带 2 张参考图
 
 ### Task 9: 工作流模板节点（workflow-template）
 
@@ -287,3 +287,4 @@ Spec：`docs/specs/2026-10-23-canvas-node-pack.md`
 - 2026-10-23 Task 5 完成：列表批量节点（变量组合、并发 3、单条重试、取消）；设置存 batchModel/batchSize/batchCount 以免与宿主生成设置冲突；浏览器验收并入 Task 10。
 - 2026-10-23 Task 6 完成：宫格节点（4 个预设、生成大图后 canvas 切分铺图）；尺寸下拉为插件内置固定选项；浏览器验收并入 Task 10。
 - 2026-10-23 Task 7 完成：分镜脚本节点（拆分镜 JSON、可编辑表格、批量出图/出视频）；hidePanel、出视频也并发 3、勾选不持久化；浏览器验收并入 Task 10。
+- 2026-10-23 Task 8 完成：主体节点（1–4 张参考图、多图资源 urls、描述可拼入提示词、插件存储主体库）；浏览器验收并入 Task 10。
