@@ -27,6 +27,7 @@ const OFFICIAL = [
     { id: "grid-shots", dir: "grid-shots", name: "宫格节点", description: "多机位九宫格、剧情四宫格、三视图并自动切分", icon: "🔲" },
     { id: "storyboard", dir: "storyboard", name: "分镜脚本节点", description: "剧本拆分镜表，批量出图出视频", icon: "🎬" },
     { id: "subject", dir: "subject", name: "主体节点", description: "保存角色或商品参考图，跨画布复用", icon: "👤" },
+    { id: "workflow-template", dir: "workflow-template", name: "工作流模板节点", description: "把一组节点存成模板，一键复用", icon: "🧰" },
 ];
 
 // 读取插件 package.json 的 version 作为清单版本的唯一来源
