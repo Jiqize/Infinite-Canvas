@@ -65,9 +65,10 @@ test("plugin resource with a single url keeps one reference", () => {
 });
 
 test("generation context sends every plugin resource image and its text", () => {
-    const { nodes, connections } = setup({ kind: "image", urls: ["data:image/png;base64,a", "data:image/png;base64,b"], text: "主体：描述" });
+    const { nodes, connections } = setup({ kind: "image", urls: ["data:image/png;base64,a", "data:image/jpeg;base64,b"], text: "主体：描述" });
     const context = buildNodeGenerationContext("t", nodes, connections, "生成");
-    expect(context.referenceImages.map((image) => image.dataUrl)).toEqual(["data:image/png;base64,a", "data:image/png;base64,b"]);
+    expect(context.referenceImages.map((image) => image.dataUrl)).toEqual(["data:image/png;base64,a", "data:image/jpeg;base64,b"]);
+    expect(context.referenceImages.map((image) => image.type)).toEqual(["image/png", "image/jpeg"]);
     expect(context.prompt).toContain("主体：描述");
 });
 
