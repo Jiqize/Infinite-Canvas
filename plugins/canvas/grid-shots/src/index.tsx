@@ -87,8 +87,10 @@ function GridShotsContent({ ctx }: CanvasNodeContentProps) {
     const label = { fontSize: 12, color: theme.node.muted } as const;
 
     return (
-        // data-canvas-no-zoom + stopPropagation:交互控件避免触发画布拖拽/缩放
-        <div data-canvas-no-zoom onMouseDown={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()} style={{ height: "100%", width: "100%", display: "flex", flexDirection: "column", gap: 8, padding: 12, boxSizing: "border-box", color: theme.node.text, overflow: "auto" }}>
+        // 空白区域可拖动节点，表单控件保持可交互。
+        <div data-canvas-no-zoom onMouseDown={(e) => {
+            if (e.target instanceof Element && e.target.closest("input, textarea, select, button")) e.stopPropagation();
+        }} onWheel={(e) => e.stopPropagation()} style={{ height: "100%", width: "100%", display: "flex", flexDirection: "column", gap: 8, padding: 12, boxSizing: "border-box", color: theme.node.text, overflow: "auto" }}>
             <label style={label}>
                 预设
                 <select value={presetId} disabled={running} onChange={(e) => ctx.updateMetadata({ gridPreset: e.target.value })} style={{ ...field, marginTop: 4 }}>

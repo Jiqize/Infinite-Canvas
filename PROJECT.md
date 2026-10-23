@@ -1,7 +1,7 @@
 # PROJECT
 - 状态：进行中
-- 当前阶段：画布新节点包（8 个官方插件）— 开发完成，待真实生成验收
-- 最近完成：节点包 Task 2–10：8 个插件登记构建、本地发现、浏览器启停验收；修复参考栏多图资源展开
-- 下一步：配置模型 Key 后验收列表批量、提示词助手、宫格、分镜脚本的真实生成（spec 验收 3/4/7/8）；跟进 PR #294/#295 评审
-- 使用工具：Claude Code（Bash、Edit、Write、Playwright MCP、gh、ego-browser、workflow 子代理）
+- 当前阶段：换角度节点球面视觉与方向提示已完善，待用户体验确认
+- 最近完成：球面增加明暗层次、相机位置标记与方向文字；浏览器检查侧面状态并恢复用户原有角度
+- 下一步：用实际素材体验背面及顶视出图和连续生成布局；继续验收节点包剩余真实生成场景及 PR #294/#295 评审
+- 使用工具：Claude Code（Bash、Edit、Write、Playwright MCP、gh、ego-browser、workflow 子代理）；Codex（Bash、apply_patch、ego-browser、web）
 - 最后更新：2026-10-23

@@ -171,7 +171,9 @@ function BatchListContent({ ctx }: CanvasNodeContentProps) {
     };
 
     return (
-        <div data-canvas-no-zoom onMouseDown={stop} onPointerDown={stop} onWheel={stop} onDoubleClick={stop} style={{ height: "100%", width: "100%", display: "flex", flexDirection: "column", gap: 8, padding: 12, boxSizing: "border-box", color: t.node.text, fontSize: 12, overflow: "hidden" }}>
+        <div data-canvas-no-zoom onMouseDown={(e) => {
+            if (e.target instanceof Element && e.target.closest("input, textarea, select, button")) e.stopPropagation();
+        }} onWheel={stop} onDoubleClick={stop} style={{ height: "100%", width: "100%", display: "flex", flexDirection: "column", gap: 8, padding: 12, boxSizing: "border-box", color: t.node.text, fontSize: 12, overflow: "hidden" }}>
             {/* 变量表:每列一个变量,取值一行一个 */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <span style={label}>变量（每行一个取值）</span>

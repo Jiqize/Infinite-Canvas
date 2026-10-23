@@ -128,6 +128,7 @@ const VIDEO_NODE_MAX_WIDTH = 420;
 const VIDEO_NODE_MAX_HEIGHT = 420;
 // Stable empty reference array prevents `... || []` from invalidating CanvasNode's React.memo on every render.
 const EMPTY_REFERENCES: CanvasResourceReference[] = [];
+const EMPTY_PLUGIN_INPUT_NODES: CanvasNodeData[] = [];
 const CONNECTION_HANDLE_HIT_RADIUS = 40;
 const CONNECTION_NODE_HIT_PADDING = 32;
 const NODE_STATUS_IDLE = "idle" as const;
@@ -713,6 +714,20 @@ function InfiniteCanvasPage() {
     );
 
     const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+    const pluginInputCacheRef = useRef(new Map<string, CanvasNodeData[]>());
+    const pluginInputNodesById = useMemo(() => {
+        const next = new Map<string, CanvasNodeData[]>();
+        connections.forEach((connection) => {
+            const source = nodeById.get(connection.fromNodeId);
+            if (source) next.set(connection.toNodeId, [...(next.get(connection.toNodeId) || []), source]);
+        });
+        next.forEach((inputs, id) => {
+            const previous = pluginInputCacheRef.current.get(id);
+            if (previous?.length === inputs.length && previous.every((source, index) => source.id === inputs[index].id && source.type === inputs[index].type && source.metadata === inputs[index].metadata)) next.set(id, previous);
+        });
+        pluginInputCacheRef.current = next;
+        return next;
+    }, [connections, nodeById]);
 
     // Connections are culled like nodes; a cubic curve stays inside its control-point hull, so endpoint bounds widened by the curvature is a safe test.
     const visibleConnections = useMemo(
@@ -3276,6 +3291,7 @@ function InfiniteCanvasPage() {
                             showImageInfo={showImageInfo}
                             mentionReferences={mentionReferencesByNodeId.get(node.id) || EMPTY_REFERENCES}
                             pluginHost={pluginHost}
+                            pluginInputNodes={pluginInputNodesById.get(node.id) || EMPTY_PLUGIN_INPUT_NODES}
                             registryVersion={nodeRegistryVersion}
                             renderPanel={renderNodePanel}
                             renderNodeContent={renderNodeContentPanel}

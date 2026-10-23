@@ -119,7 +119,9 @@ function WorkflowTemplateContent({ ctx }: CanvasNodeContentProps) {
     const input = { flex: 1, minWidth: 0, padding: "4px 8px", borderRadius: 8, border: `1px solid ${theme.node.stroke}`, background: theme.node.fill, color: theme.node.text, fontSize: 12, outline: "none" } as const;
 
     return (
-        <div data-canvas-no-zoom onMouseDown={stop} onPointerDown={stop} onDoubleClick={stop} style={{ height: "100%", width: "100%", display: "flex", flexDirection: "column", gap: 8, padding: 12, boxSizing: "border-box", color: theme.node.text, fontSize: 12 }}>
+        <div data-canvas-no-zoom onMouseDown={(e) => {
+            if (e.target instanceof Element && e.target.closest("input, textarea, select, button")) e.stopPropagation();
+        }} onDoubleClick={stop} style={{ height: "100%", width: "100%", display: "flex", flexDirection: "column", gap: 8, padding: 12, boxSizing: "border-box", color: theme.node.text, fontSize: 12 }}>
             {/* 保存区:仅在有上游组时可用 */}
             <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingBottom: 8, borderBottom: `1px solid ${theme.node.stroke}` }}>
                 <div style={{ color: theme.node.muted }}>{group ? `已连入组「${group.title || "未命名组"}」` : "连入一个组即可存为模板"}</div>

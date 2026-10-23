@@ -4,7 +4,7 @@
 
 内置节点只有文本、图片、视频、音频、生成配置、组六种;其余节点(Markdown、SVG、HTML、3D 全景、便利贴……)都是插件。
 
-官方插件另含画布节点包:对比、拼图合成、提示词助手、列表批量、宫格、分镜脚本、主体、工作流模板(目录 `compare/ collage/ prompt-assistant/ batch-list/ grid-shots/ storyboard/ subject/ workflow-template/`)。
+官方插件另含画布节点包:对比、拼图合成、提示词助手、列表批量、宫格、换角度、分镜脚本、主体、工作流模板(目录 `compare/ collage/ prompt-assistant/ batch-list/ grid-shots/ camera-angle/ storyboard/ subject/ workflow-template/`)。
 
 作者只写节点 UI 与逻辑,**类型、JSX、宿主 React、构建全部由 [`@infinite-canvas/plugin-sdk`](./sdk/README.md) 提供**,写 TSX 全程有代码提示;产物仍是宿主加载器现有契约的 ESM(React external、宿主单例)。
 

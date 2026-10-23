@@ -63,8 +63,10 @@ function PromptAssistantContent({ ctx }: CanvasNodeContentProps) {
     const primaryBtn = { ...btn, background: theme.toolbar.activeBg, color: theme.toolbar.activeText, border: `1px solid ${theme.toolbar.activeBg}`, opacity: enabled ? 1 : 0.5, cursor: enabled ? "pointer" : "not-allowed" } as const;
 
     return (
-        // data-canvas-no-zoom + stopPropagation:交互控件避免触发画布拖拽/缩放
-        <div data-canvas-no-zoom onMouseDown={(e) => e.stopPropagation()} style={{ height: "100%", width: "100%", display: "flex", flexDirection: "column", gap: 8, padding: 12, boxSizing: "border-box", color: theme.node.text, fontSize: 12 }}>
+        // 空白区域交给画布拖动节点，仅交互控件阻止拖动。
+        <div data-canvas-no-zoom onMouseDown={(e) => {
+            if (e.target instanceof Element && e.target.closest("input, textarea, select, button")) e.stopPropagation();
+        }} style={{ height: "100%", width: "100%", display: "flex", flexDirection: "column", gap: 8, padding: 12, boxSizing: "border-box", color: theme.node.text, fontSize: 12 }}>
             <div style={{ display: "flex", gap: 6 }}>
                 <select value={mode} disabled={generating} onChange={(e) => ctx.updateMetadata({ assistantMode: e.target.value })} style={{ ...field, flex: "0 0 auto" }}>
                     {ASSISTANT_MODES.map((item) => (

@@ -286,7 +286,7 @@ export default {
         reverseComposer: "参考图片：@[node:{{imageId}}]\n任务说明：@[node:{{textId}}]",
         editors: {
             reset: "重置", zoomOut: "缩小", zoomIn: "放大", loading: "读取中", unknown: "未知", cancel: "取消",
-            angleTitle: "AI 多角度", angleDescription: "左侧只预览方向，结果会基于原图重新生成", horizontal: "左右角度", pitch: "俯仰角度", distance: "镜头距离", lens: "广角镜头", standard: "标准", wide: "广角", aiGenerate: "AI 生成",
+            angleTitle: "换拍摄角度", angleDescription: "左侧是原图；调整机位后，AI 会生成新视角。原图未拍到的部分需要 AI 推测。", originalImage: "原图", horizontal: "左右机位", pitch: "上下角度", cameraLeft: "画面左侧", cameraFront: "正面", cameraRight: "画面右侧", cameraLow: "低机位", cameraLevel: "平视", cameraHigh: "高机位", distance: "镜头距离", lens: "广角镜头", standard: "标准", wide: "广角", aiGenerate: "生成这个角度",
             upscaleTitle: "图片放大", source: "源图", targetPixels: "目标像素", maxReached: "图片已达到 4K，无需放大", targetReached: "图片已达到当前目标像素，无需放大", algorithm: "放大算法", outputSize: "输出尺寸", upscale: "生成放大图", high: "高清插值", highDescription: "适合照片和细节图", bilinear: "双线性", bilinearDescription: "平滑、速度快", nearest: "最近邻", nearestDescription: "适合像素风格",
             cropTitle: "裁剪图片", adjustCrop: "调整裁剪框", cropHint: "滚轮缩放 · 中键或空格+左键拖动画面", cropSize: "裁剪尺寸 {{size}}", ratio: "比例 {{ratio}}", original: "原图 {{width}} x {{height}}", confirmCrop: "确认裁剪", free: "自由", fixed: "固定", originalMode: "原图",
             maskTitle: "局部遮罩编辑", maskHint: "滚轮缩放 · 中键或空格+左键拖动画面 · Alt+左/右键横拖调笔刷 · Ctrl/Cmd+Z 撤回 · Ctrl/Cmd+Shift+Z 重做", brush: "画笔", erase: "擦除", undoMaskTitle: "撤回局部涂抹 (Ctrl/Cmd+Z)", undoMask: "撤回局部涂抹", redoMaskTitle: "重做局部涂抹 (Ctrl/Cmd+Shift+Z)", redoMask: "重做局部涂抹", brushSize: "笔刷大小", editInstructions: "修改要求", maskPlaceholder: "例如：把选中区域改成金属材质，保持原图光影", maskPromptRequired: "请输入修改要求", maskRequired: "请先涂抹局部区域", maskExport: "导出到画布", maskGenerate: "立刻生成",
@@ -298,7 +298,7 @@ export default {
         references: { title: "参考内容", self: "本图", select: "从画布选择参考节点", disconnect: "断开参考连接", empty: "暂无内容", selecting: "正在添加参考", choose: "选择", selectingHint: "从画布选择参考 · ESC 返回输入框" },
         composer: { title: "组装提示词", description: "@ 引用已连接资产，发送前按当前连接重新编号", placeholder: "输入提示词，按 @ 引用连接的图片、文本或组", imagePreview: "引用图片预览", resources: { image: "图片{{index}}", video: "视频{{index}}", audio: "音频{{index}}", text: "文本{{index}}", group: "组{{index}}" } },
         controls: { ratio: "比例", duplicate: "复制", delete: "删除", images: "{{count}} 张", texts: "{{count}} 条", generations: "{{count}} 次", reasoning: "推理" },
-        generation: { interrupted: "页面刷新后生成已中断，请重新生成。", front: "正面视角", rotateRight: "向右旋转 {{angle}} 度", rotateLeft: "向左旋转 {{angle}} 度", level: "水平视角", topDown: "俯视 {{angle}} 度", lowAngle: "仰视 {{angle}} 度", angleLabel: "AI 多角度：{{horizontal}}，{{pitch}}，镜头距离 {{distance}}，{{lens}}镜头", anglePrompt: "基于参考图重新生成同一主体的新视角，保持主体、颜色、材质和画面风格一致，不要只做透视变形。{{angle}}。" },
+        generation: { interrupted: "页面刷新后生成已中断，请重新生成。", front: "正前方", rotateRight: "画面右前方 {{angle}}°", rotateLeft: "画面左前方 {{angle}}°", level: "平视", topDown: "俯拍 {{angle}}°", lowAngle: "仰拍 {{angle}}°", angleLabel: "{{horizontal}} · {{pitch}}", anglePrompt: "以参考图为依据，从{{angle}}重新拍摄同一场景。移动相机，主体保持原位和原有姿态；保留主体身份与外观细节，人物的面容、发型、服装款式，以及已有道具和背景的空间关系。根据新视角自然补全原图未呈现的部分。生成一张新视角图，不要直接旋转或透视拉伸原图。" },
         agentOps: { add_node: "新增节点", update_node: "更新节点", delete_node: "删除节点", delete_connections: "删除连线", connect_nodes: "连接", set_viewport: "调整视图", select_nodes: "选择节点", run_generation: "触发生成" },
         pluginErrors: { invalidExport: "插件未导出有效对象", missingFields: "插件缺少 id 或 nodes", downloadFailed: "下载失败 (HTTP {{status}})", registryFailed: "获取官方插件列表失败 (HTTP {{status}})" },
         shortcut: {

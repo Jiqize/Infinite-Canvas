@@ -31,6 +31,7 @@ type CanvasNodeProps = {
     showImageInfo: boolean;
     mentionReferences?: CanvasResourceReference[];
     pluginHost?: CanvasPluginHost;
+    pluginInputNodes?: CanvasNodeData[];
     registryVersion?: number;
     renderPanel?: (node: CanvasNodeData) => ReactNode;
     renderNodeContent?: (node: CanvasNodeData) => ReactNode;
@@ -97,6 +98,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     showImageInfo,
     mentionReferences = [],
     pluginHost,
+    pluginInputNodes,
     renderPanel,
     renderNodeContent,
     groupChildCount = 0,
@@ -127,7 +129,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     const { t } = useTranslation();
     const [hovered, setHovered] = useState(false);
     const definition = getNodeDefinition(data.type);
-    const pluginContext = useMemo<CanvasNodeContext | null>(() => (pluginHost ? buildNodeContext(pluginHost, data, theme, scale, isSelected) : null), [pluginHost, data, theme, scale, isSelected]);
+    const pluginContext = useMemo<CanvasNodeContext | null>(() => (pluginHost ? buildNodeContext(pluginHost, data, theme, scale, isSelected, pluginInputNodes) : null), [pluginHost, data, theme, scale, isSelected, pluginInputNodes]);
     const [isEditingContent, setIsEditingContent] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [titleDraft, setTitleDraft] = useState(data.title || "");

@@ -26,8 +26,10 @@ function TemplateContent({ ctx }: CanvasNodeContentProps) {
     const btn = { padding: "4px 10px", borderRadius: 8, border: `1px solid ${ctx.theme.node.stroke}`, background: ctx.theme.toolbar.panel, color: ctx.theme.node.text, cursor: "pointer", fontSize: 12 } as const;
 
     return (
-        // data-canvas-no-zoom + stopPropagation:交互控件避免触发画布拖拽/缩放
-        <div data-canvas-no-zoom onMouseDown={(e) => e.stopPropagation()} style={{ height: "100%", width: "100%", display: "flex", flexDirection: "column", gap: 8, padding: 12, boxSizing: "border-box", color: ctx.theme.node.text }}>
+        // 空白区域可拖动节点，表单控件保持可交互。
+        <div data-canvas-no-zoom onMouseDown={(e) => {
+            if (e.target instanceof Element && e.target.closest("input, textarea, select, button")) e.stopPropagation();
+        }} style={{ height: "100%", width: "100%", display: "flex", flexDirection: "column", gap: 8, padding: 12, boxSizing: "border-box", color: ctx.theme.node.text }}>
             <div style={{ display: "flex", gap: 6 }}>
                 <button type="button" style={btn} onClick={() => setEditing((v) => !v)}>
                     {editing ? "完成" : "编辑"}

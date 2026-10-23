@@ -25,6 +25,7 @@ const OFFICIAL = [
     { id: "prompt-assistant", dir: "prompt-assistant", name: "提示词助手节点", description: "扩写、精简、翻译、服装描述，支持看图", icon: "🪄" },
     { id: "batch-list", dir: "batch-list", name: "列表批量节点", description: "变量组合批量出图", icon: "📋" },
     { id: "grid-shots", dir: "grid-shots", name: "宫格节点", description: "多机位九宫格、剧情四宫格、三视图并自动切分", icon: "🔲" },
+    { id: "camera-angle", dir: "camera-angle", name: "换角度节点", description: "从参考图调整拍摄机位并生成新角度图片", icon: "📷" },
     { id: "storyboard", dir: "storyboard", name: "分镜脚本节点", description: "剧本拆分镜表，批量出图出视频", icon: "🎬" },
     { id: "subject", dir: "subject", name: "主体节点", description: "保存角色或商品参考图，跨画布复用", icon: "👤" },
     { id: "workflow-template", dir: "workflow-template", name: "工作流模板节点", description: "把一组节点存成模板，一键复用", icon: "🧰" },
