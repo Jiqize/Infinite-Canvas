@@ -7,7 +7,7 @@ import type { CanvasResourceKind } from "@/lib/canvas/canvas-resource-references
 
 // Resource emitted when a plugin node is consumed as an upstream input.
 // kind 为 image 时可用 urls 输出多张图（优先于 url），同时带 text 会额外追加一条文本引用。
-export type CanvasNodeResource = { kind: CanvasResourceKind; text?: string; url?: string; urls?: string[] };
+export type CanvasNodeResource = { kind: CanvasResourceKind; text?: string; url?: string; urls?: string[]; caption?: string };
 
 // AI generation capabilities injected by the host, reusing its model and credential configuration.
 export type GenerateOptions = { signal?: AbortSignal; references?: string[]; model?: string };
@@ -66,6 +66,7 @@ export type CanvasNodeContext = {
     ai: CanvasPluginAi;
     // Opens or closes the custom panel below this node; the definition must provide a Panel.
     openPanel: () => void;
+    openNodePanel: (nodeId: string) => void;
     closePanel: () => void;
     // Plugin-private persistence isolated by namespace.
     storage: PluginStorage;

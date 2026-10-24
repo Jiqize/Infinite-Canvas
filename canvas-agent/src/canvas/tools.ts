@@ -21,6 +21,7 @@ export function compactCanvasState(state: CanvasSnapshot | null) {
 export function compactNode(node: CanvasNode) {
     const metadata = { ...(node.metadata || {}) };
     if (typeof metadata.content === "string" && metadata.content.length > 240) metadata.content = `${metadata.content.slice(0, 120)}...`;
+    if (typeof metadata.poseReferenceImage === "string" && metadata.poseReferenceImage.length > 240) metadata.poseReferenceImage = `${metadata.poseReferenceImage.slice(0, 120)}...`;
     return { id: node.id, type: node.type, title: node.title, position: node.position, width: node.width, height: node.height, metadata };
 }
 

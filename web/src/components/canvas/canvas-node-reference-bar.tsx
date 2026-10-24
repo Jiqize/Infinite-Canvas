@@ -20,7 +20,7 @@ export function CanvasNodeReferenceBar({ nodeId, nodes, connectedNodes, onDiscon
         <div className="mb-2">
             <div className="mb-1.5 text-[11px] font-medium" style={{ color: theme.node.muted }}>{t("canvas.references.title")}</div>
             <div className="thin-scrollbar flex min-h-12 gap-2 overflow-x-auto pb-1">
-                {references.map(({ key, node, sourceNodeId, label, imageUrl }) => <ReferenceItem key={key} node={node} imageUrl={imageUrl} label={showIndex ? label : undefined} onRemove={() => onDisconnect?.(sourceNodeId, nodeId)} />)}
+                {references.map(({ key, node, sourceNodeId, label, imageUrl }) => <ReferenceItem key={key} node={node} imageUrl={imageUrl} label={showIndex ? label : undefined} caption={getNodeDefinition(node.type)?.resource?.(node)?.caption} onRemove={() => onDisconnect?.(sourceNodeId, nodeId)} />)}
                 {/* 节点自身的图会作为最后一张参考图一起发送 */}
                 {selfImageNode ? <ReferenceItem node={selfImageNode} label={imageReferenceLabel(imageIndex)} caption={t("canvas.references.self")} /> : null}
                 <button type="button" className="grid size-12 shrink-0 place-items-center rounded-xl border bg-transparent transition hover:opacity-70" style={{ borderColor: theme.toolbar.border, color: theme.node.muted }} title={t("canvas.references.select")} onClick={() => onStartSelection?.(nodeId)}>

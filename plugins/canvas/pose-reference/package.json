@@ -1,6 +1,6 @@
 {
     "name": "canvas-plugin-pose-reference",
-    "version": "1.1.1",
+    "version": "1.2.0",
     "private": true,
     "type": "module",
     "description": "Infinite Canvas 姿势参考节点插件：用另一张图片的姿势重拍人物",

@@ -1,11 +1,24 @@
-import { definePlugin, readImageSize, useEffect, useRef, useState } from '@infinite-canvas/plugin-sdk';
-import type { CanvasNodeContentProps, CanvasNodeData } from '@infinite-canvas/plugin-sdk';
+import { definePlugin, useEffect, useRef, useState } from '@infinite-canvas/plugin-sdk';
+import type { CanvasAgentOp, CanvasNodeContentProps, CanvasNodeData } from '@infinite-canvas/plugin-sdk';
 import type { PointerEvent } from 'react';
 import { createMannequinStage, FRAME_OPTIONS, POSE_OPTIONS } from './mannequin';
 import type { Framing, PoseId } from './mannequin';
 
-function imageSource(node: CanvasNodeData) {
-    return node.type === 'image' && typeof node.metadata?.content === 'string' ? node.metadata.content : '';
+function imageSource(node?: CanvasNodeData) {
+    return node?.type === 'image' && typeof node.metadata?.content === 'string' ? node.metadata.content : '';
+}
+
+async function persistentImageSource(source: string) {
+    if (!source.startsWith('blob:')) return source;
+    const response = await fetch(source);
+    if (!response.ok) throw new Error('姿势参考图片读取失败');
+    const blob = await response.blob();
+    return new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('姿势参考图片读取失败'));
+        reader.onerror = () => reject(new Error('姿势参考图片读取失败'));
+        reader.readAsDataURL(blob);
+    });
 }
 
 function wrapYaw(value: number) {
@@ -23,7 +36,7 @@ function cameraLabel(yaw: number, pitch: number) {
     return side + ' · ' + (pitch === 0 ? '平视' : pitch > 0 ? '俯拍 ' + pitch + '°' : '仰拍 ' + Math.abs(pitch) + '°');
 }
 
-const imagePrompt = '图片1是需要保留的人物原图：以此图的人物身份、面容、发型、服装款式、颜色、面料细节、拍摄场景和画面风格为准。图片2只作为姿势参考：借用人物的身体朝向、站坐姿、手臂和腿部的位置与重心；不要复制图片2的人脸、发型、衣服、道具或背景。生成图片1中的同一个人，以图片2的姿势自然重新拍摄，保持合理的人体结构、衣服褶皱和光影。';
+const imagePrompt = '参考图中有人物原图和姿势参考图。保留人物原图的身份、面容、发型、服装、鞋子、颜色、材质、背景和画面风格；只借用姿势参考图的身体朝向、手脚位置与重心。不要复制姿势参考图的人脸、衣服、道具或背景。生成同一人物的新姿势，保持合理的人体结构、衣服褶皱和光影。';
 
 function PoseReferenceContent({ ctx }: CanvasNodeContentProps) {
     const inputs = ctx.getUpstream().filter((node) => imageSource(node));
@@ -34,12 +47,16 @@ function PoseReferenceContent({ ctx }: CanvasNodeContentProps) {
     const framing = FRAME_OPTIONS.find((option) => option.id === ctx.node.metadata?.poseFraming)?.id || 'full';
     const yaw = wrapYaw(Number(ctx.node.metadata?.poseYaw) || 0);
     const pitch = clampPitch(Number(ctx.node.metadata?.posePitch) || 0);
-    const [running, setRunning] = useState(false);
+    const output = ctx.getDownstream().find((node) => node.type === 'image' && node.metadata?.poseReferenceTargetId === ctx.node.id);
+    const guideSource = imageSource(guide);
+    const guideVersion = guide?.metadata?.storageKey || [guideSource.length, guideSource.slice(-32)].join(':');
+    const signature = mode === 'mannequin' ? [mode, pose, yaw, pitch, framing].join(':') : [mode, guide?.id, guideVersion].join(':');
+    const needsSync = Boolean(output && ctx.node.metadata?.poseReferenceSignature !== signature);
+    const [syncing, setSyncing] = useState(false);
     const [dragging, setDragging] = useState(false);
     const [stageReady, setStageReady] = useState(false);
     const [stageError, setStageError] = useState('');
     const [message, setMessage] = useState('');
-    const abortRef = useRef<AbortController | null>(null);
     const mountRef = useRef<HTMLDivElement | null>(null);
     const stageRef = useRef<ReturnType<typeof createMannequinStage> | null>(null);
     const dragRef = useRef<{ pointerId: number; x: number; y: number; yaw: number; pitch: number } | null>(null);
@@ -87,53 +104,36 @@ function PoseReferenceContent({ ctx }: CanvasNodeContentProps) {
         setDragging(false);
     };
 
-    const generate = async () => {
-        if (!person || running || mode === 'image' && !guide || mode === 'mannequin' && !stageReady) return;
-        const controller = new AbortController();
-        abortRef.current = controller;
-        setRunning(true);
-        setMessage('生成中…');
+    const sendToImageNode = async () => {
+        if (syncing || mode === 'image' && !guide || mode === 'mannequin' && !stageReady) return;
+        setSyncing(true);
         try {
             const poseName = POSE_OPTIONS.find((option) => option.id === pose)?.label || '站姿';
             const frameName = FRAME_OPTIONS.find((option) => option.id === framing)?.label || '全身';
-            const reference = mode === 'mannequin' ? stageRef.current?.capture() : imageSource(guide!);
-            if (!reference) throw new Error('白膜画面尚未就绪');
+            const reference = mode === 'mannequin' ? stageRef.current?.capture() : await persistentImageSource(guideSource);
+            if (!reference) throw new Error('参考姿势尚未就绪');
             const prompt = mode === 'mannequin'
-                ? '图片1是人物原图，必须保留同一个人的面容、发型、身形、服装、鞋子、颜色、材质及原有背景。图片2是无服装的3D白膜摄影示意，只用于确定身体姿势、人物朝向、相机位置和画面取景；不要把白膜材质、无脸头部、地台或任何示意物体画进结果。按图片2的' + poseName + '姿势、' + cameraLabel(yaw, pitch) + '机位和' + frameName + '景别重新拍摄图片1中的人物。若景别裁切身体，以图片2的构图为准；保持合理的手脚、衣服褶皱和光影。'
+                ? '参考图中有人物原图和无服装的3D白膜姿势示意。保留人物原图的面容、发型、身形、服装、鞋子、颜色、材质及原有背景；白膜只用于确定身体姿势、人物朝向、相机位置和画面取景，不要把白膜材质、无脸头部、地台或其他示意物体画进结果。按白膜的' + poseName + '姿势、' + cameraLabel(yaw, pitch) + '机位和' + frameName + '景别重新拍摄人物。若景别裁切身体，以白膜构图为准；保持合理的手脚、衣服褶皱和光影。'
                 : imagePrompt;
-            const result = await ctx.ai.generateImage(prompt, { references: [imageSource(person), reference], count: 1, signal: controller.signal });
-            const image = result.images[0];
-            if (!image) throw new Error('模型没有返回图片');
-            const size = await readImageSize(image);
-            if (controller.signal.aborted) {
-                setMessage('已取消');
-                return;
-            }
-            const id = 'pose-reference-' + ctx.node.id + '-' + Date.now().toString(36);
-            const previous = ctx.getDownstream().filter((node) => node.type === 'image' && node.id.startsWith('pose-reference-' + ctx.node.id + '-'));
-            const y = previous.length ? Math.max(...previous.map((node) => node.position.y + node.height)) + 24 : ctx.node.position.y;
-            const width = 240;
-            ctx.applyOps([
-                {
-                    type: 'add_node', id, nodeType: 'image', title: mode === 'mannequin' ? poseName + ' · ' + cameraLabel(yaw, pitch) + ' · ' + frameName : '姿势参考结果',
-                    position: { x: ctx.node.position.x + ctx.node.width + 80, y },
-                    width, height: Math.round((width * size.height) / size.width),
-                    metadata: {
-                        content: image, prompt, status: 'success', naturalWidth: size.width, naturalHeight: size.height,
-                        mimeType: image.match(/^data:([^;,]+)/)?.[1] || 'image/png',
-                        poseMode: mode, posePreset: pose, poseYaw: yaw, posePitch: pitch, poseFraming: framing,
-                        posePersonNodeId: person.id, ...(mode === 'image' ? { poseGuideNodeId: guide?.id } : {}),
-                    },
-                },
-                { type: 'connect_nodes', fromNodeId: ctx.node.id, toNodeId: id },
-                { type: 'select_nodes', ids: [id] },
-            ]);
-            setMessage('已生成 1 张姿势图片');
+            const existing = output;
+            const id = existing?.id || 'pose-output-' + ctx.node.id + '-' + Date.now().toString(36);
+            const ops: CanvasAgentOp[] = [{ type: 'update_node', id: ctx.node.id, metadata: { poseReferenceImage: reference, poseReferenceSignature: signature } }];
+            if (existing) {
+                const oldPersonId = existing.metadata?.poseReferencePersonId;
+                const oldConnection = typeof oldPersonId === 'string' && oldPersonId !== person?.id ? ctx.getConnections().find((connection) => connection.fromNodeId === oldPersonId && connection.toNodeId === id) : undefined;
+                if (oldConnection) ops.push({ type: 'delete_connections', ids: [oldConnection.id] });
+                ops.push({ type: 'update_node', id, metadata: { poseReferencePersonId: person?.id || '', ...(existing.metadata?.prompt === existing.metadata?.poseReferencePrompt ? { prompt, poseReferencePrompt: prompt } : {}) } });
+            } else ops.push({ type: 'add_node', id, nodeType: 'image', title: '姿势参考生图', position: { x: ctx.node.position.x + ctx.node.width + 80, y: ctx.node.position.y }, width: 260, height: 320, metadata: { prompt, poseReferencePrompt: prompt, poseReferenceTargetId: ctx.node.id, poseReferencePersonId: person?.id || '' } });
+            if (person && !ctx.getConnections().some((connection) => connection.fromNodeId === person.id && connection.toNodeId === id)) ops.push({ type: 'connect_nodes', fromNodeId: person.id, toNodeId: id });
+            if (!existing) ops.push({ type: 'connect_nodes', fromNodeId: ctx.node.id, toNodeId: id });
+            ops.push({ type: 'select_nodes', ids: [id] });
+            ctx.applyOps(ops);
+            ctx.openNodePanel(id);
+            setMessage(person ? '已连接参考姿势和人物原图，请在图片节点设置参数并生成。' : '已连接参考姿势，请在图片节点再连接人物原图并生成。');
         } catch (error) {
-            setMessage(controller.signal.aborted ? '已取消' : '生成失败：' + (error instanceof Error ? error.message : String(error)));
+            setMessage('连接失败：' + (error instanceof Error ? error.message : String(error)));
         } finally {
-            abortRef.current = null;
-            setRunning(false);
+            setSyncing(false);
         }
     };
 
@@ -234,8 +234,8 @@ function PoseReferenceContent({ ctx }: CanvasNodeContentProps) {
                     <div style={labelStyle}>保留人物与服装，只借用右图的身体姿势。</div>
                 </>
             )}
-            <button type="button" disabled={!running && (!person || mode === 'image' && !guide || mode === 'mannequin' && !stageReady)} onClick={running ? () => abortRef.current?.abort() : generate} style={{ alignSelf: 'flex-start', padding: '5px 0', border: 0, background: 'transparent', color: theme.node.text, cursor: 'pointer', opacity: person && (mode === 'image' ? guide : stageReady) || running ? 1 : 0.45, fontSize: 12 }}>{running ? '取消' : '生成这个姿势'}</button>
-            {message ? <div style={{ ...labelStyle, overflowWrap: 'anywhere' }}>{message}</div> : null}
+            <button type="button" disabled={syncing || (mode === 'image' ? !guide : !stageReady)} onClick={sendToImageNode} style={{ alignSelf: 'flex-start', padding: '7px 12px', border: '1px solid ' + theme.node.activeStroke, borderRadius: 8, background: 'transparent', color: theme.node.text, cursor: 'pointer', opacity: mode === 'image' ? guide ? 1 : 0.45 : stageReady ? 1 : 0.45, fontSize: 12, fontWeight: 600 }}>{syncing ? '读取参考图…' : output ? '更新参考姿势 →' : '在图片节点生成 →'}</button>
+            {needsSync || message ? <div style={{ ...labelStyle, overflowWrap: 'anywhere' }}>{needsSync ? '姿势已调整，点击按钮同步到图片节点。' : message}</div> : null}
         </div>
     );
 }
@@ -243,11 +243,12 @@ function PoseReferenceContent({ ctx }: CanvasNodeContentProps) {
 export default definePlugin({
     id: 'pose-reference',
     name: '姿势参考节点',
-    version: '1.1.1',
+    version: '1.2.0',
     description: '3D 白膜选姿势、机位与景别，或从图片借用姿势',
     nodes: [{
-        type: 'pose-reference:node', title: '姿势参考', icon: '🕺', description: '白膜工作台或图片参考，生成同一人物的新姿势',
+        type: 'pose-reference:node', title: '姿势参考', icon: '🕺', description: '白膜工作台或图片参考，将姿势连接到图片生成节点',
         defaultSize: { width: 390, height: 540 }, defaultMetadata: { poseMode: 'mannequin', posePreset: 'pocket', poseYaw: 0, posePitch: 0, poseFraming: 'full' },
         minimapColor: '#7b8cd0', hidePanel: true, Content: PoseReferenceContent,
+        resource: (node) => typeof node.metadata?.poseReferenceImage === 'string' && node.metadata.poseReferenceImage ? { kind: 'image', url: node.metadata.poseReferenceImage, caption: '参考姿势' } : null,
     }],
 });

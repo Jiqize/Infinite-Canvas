@@ -1556,6 +1556,25 @@ function InfiniteCanvasPage() {
         setDialogNodeId(id);
     }, []);
 
+    const replaceImageFileNode = useCallback(async (file: File, nodeId: string) => {
+        const image = await uploadImage(file);
+        setNodes((prev) => prev.map((node) => {
+            if (node.id !== nodeId || node.type !== CanvasNodeType.Image) return node;
+            const scale = Math.min(node.width / image.width, node.height / image.height);
+            const nextSize = node.metadata?.freeResize ? { width: node.width, height: node.height } : { width: image.width * scale, height: image.height * scale };
+            return {
+                ...node,
+                title: file.name,
+                position: { x: node.position.x + (node.width - nextSize.width) / 2, y: node.position.y + (node.height - nextSize.height) / 2 },
+                width: nextSize.width,
+                height: nextSize.height,
+                metadata: { ...node.metadata, ...imageMetadata(image), errorDetails: undefined, images: undefined, primaryImageId: undefined },
+            };
+        }));
+        setSelectedNodeIds(new Set([nodeId]));
+        setSelectedConnectionId(null);
+    }, []);
+
     const createVideoFileNode = useCallback(async (file: File, position: Position) => {
         const video = await uploadMediaFile(file, "video");
         const size = fitNodeSize(video.width || 1280, video.height || 720, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
@@ -2286,6 +2305,8 @@ function InfiniteCanvasPage() {
                     );
                     setSelectedNodeIds(new Set([target.nodeId]));
                     setSelectedConnectionId(null);
+                } else if (nodesRef.current.find((node) => node.id === target.nodeId)?.type === CanvasNodeType.Image) {
+                    await replaceImageFileNode(first, target.nodeId);
                 } else {
                     const image = await uploadImage(first);
                     const s = fitNodeSize(image.width, image.height);
@@ -2350,7 +2371,7 @@ function InfiniteCanvasPage() {
             uploadTargetRef.current = null;
             event.target.value = "";
         },
-        [createAudioFileNode, createImageFileNode, createVideoFileNode, screenToCanvas, size.height, size.width],
+        [createAudioFileNode, createImageFileNode, createVideoFileNode, replaceImageFileNode, screenToCanvas, size.height, size.width],
     );
 
     const handleDrop = useCallback(
@@ -2362,9 +2383,15 @@ function InfiniteCanvasPage() {
             if (!files.length) return;
 
             const basePos = screenToCanvas(event.clientX, event.clientY);
+            const targetId = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId : undefined;
+            const targetIsImage = files[0].type.startsWith("image/") && nodesRef.current.some((node) => node.id === targetId && node.type === CanvasNodeType.Image);
+            if (targetIsImage && targetId) {
+                void replaceImageFileNode(files.shift()!, targetId).catch(() => message.error(t("common.imageReadFailed")));
+            }
             const STAGGER = 40;
             for (let i = 0; i < files.length; i++) {
-                const pos = { x: basePos.x + i * STAGGER, y: basePos.y + i * STAGGER };
+                const offset = (i + (targetIsImage ? 1 : 0)) * STAGGER;
+                const pos = { x: basePos.x + offset, y: basePos.y + offset };
                 const f = files[i];
                 if (isAudioFile(f)) {
                     void createAudioFileNode(f, pos);
@@ -2375,7 +2402,7 @@ function InfiniteCanvasPage() {
                 }
             }
         },
-        [createAudioFileNode, createImageFileNode, createVideoFileNode, screenToCanvas],
+        [createAudioFileNode, createImageFileNode, createVideoFileNode, message, replaceImageFileNode, screenToCanvas, t],
     );
 
     const startTitleEditing = useCallback(() => {

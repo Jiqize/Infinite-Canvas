@@ -134,7 +134,7 @@ export type CanvasAgentOp =
 
 export type CanvasResourceKind = "image" | "video" | "audio" | "text";
 // kind 为 image 时可用 urls 输出多张图(优先于 url);同时带 text 会额外追加一条文本引用
-export type CanvasNodeResource = { kind: CanvasResourceKind; text?: string; url?: string; urls?: string[] };
+export type CanvasNodeResource = { kind: CanvasResourceKind; text?: string; url?: string; urls?: string[]; caption?: string };
 
 // ---------------------------------------------------------------------------
 // AI 生成:插件直接复用宿主的模型/密钥配置发起生成(生图/生视频/生文本/生音频)
@@ -236,6 +236,7 @@ export type CanvasNodeContext = {
     ai: CanvasPluginAi;
     // 打开/关闭本节点下方的自定义 Panel(需在节点定义里提供 Panel)
     openPanel: () => void;
+    openNodePanel: (nodeId: string) => void;
     closePanel: () => void;
     // 插件私有持久化,按插件 id 命名空间隔离
     storage: PluginStorage;
