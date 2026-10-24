@@ -1,5 +1,5 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { Button, Segmented, Switch } from "antd";
 import { CircleDot, Eraser, Grid2x2, Group, Hand, Image as ImageIcon, Info, LocateFixed, MousePointer2, Music2, Palette, Puzzle, Redo2, Settings2, Square, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
 
@@ -13,7 +13,7 @@ import { builtinThemes } from "@/lib/theme-presets";
 import { ThemeSwatch, themeLabel } from "@/components/layout/config-theme";
 import { useTranslation } from "react-i18next";
 
-export function CanvasToolbar({
+export const CanvasToolbar = memo(function CanvasToolbar({
     selectedCount,
     canvasTool,
     canUndo,
@@ -286,7 +286,7 @@ export function CanvasToolbar({
             ) : null}
         </div>
     );
-}
+});
 
 function ToolbarButton({
     id,

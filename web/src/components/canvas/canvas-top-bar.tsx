@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { BookOpen, Bot, Download, Home, Images, Menu, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Trash2, Undo2, Upload } from "lucide-react";
 import { Button, Dropdown, Modal, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
@@ -9,7 +9,7 @@ import { useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { DOCS_URL } from "@/constant/env";
 
-export function CanvasTopBar({
+export const CanvasTopBar = memo(function CanvasTopBar({
     title,
     titleDraft,
     isTitleEditing,
@@ -175,7 +175,7 @@ export function CanvasTopBar({
             </Modal>
         </>
     );
-}
+});
 
 function MenuLabel({ text, shortcut }: { text: string; shortcut: string }) {
     return (

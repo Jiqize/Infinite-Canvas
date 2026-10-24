@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Compass, Focus, HelpCircle } from "lucide-react";
-import { useState } from "react";
+import { memo, useCallback, useState } from "react";
 import { Button, Modal, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 
@@ -17,6 +17,7 @@ type CanvasZoomControlsProps = {
 
 export function CanvasZoomControls({ scale, onScaleChange, onReset, isMiniMapOpen, onToggleMiniMap }: CanvasZoomControlsProps) {
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
+    const closeShortcuts = useCallback(() => setShortcutsOpen(false), []);
     const { t } = useTranslation();
     const colorTheme = useThemeStore((state) => state.theme);
     const theme = useCanvasTheme();
@@ -59,21 +60,29 @@ export function CanvasZoomControls({ scale, onScaleChange, onReset, isMiniMapOpe
                     <Button type="text" className="!h-8 !w-8 !min-w-8 !p-0" style={shortcutsOpen ? activeStyle : { color: theme.toolbar.item }} icon={<HelpCircle className="size-4" />} onClick={() => setShortcutsOpen(true)} aria-label={t("canvas.shortcuts")} />
                 </Tooltip>
             </div>
-            <Modal title={t("canvas.shortcuts")} open={shortcutsOpen} onCancel={() => setShortcutsOpen(false)} footer={null} centered>
-                <div className="space-y-3 border-t pt-4 text-sm" style={{ borderColor: theme.node.stroke }}>
-                    <Shortcut label={`Ctrl / Space + ${t("canvas.shortcut.drag")}`} value={t("canvas.shortcut.toggleTool")} />
-                    <Shortcut label={t("canvas.shortcut.wheel")} value={t("canvas.shortcut.zoom")} />
-                    <Shortcut label={t("canvas.shortcut.drag")} value={t("canvas.shortcut.boxSelect")} />
-                    <Shortcut label={`Shift / Cmd + ${t("canvas.shortcut.click")}`} value={t("canvas.shortcut.addSelection")} />
-                    <Shortcut label="Ctrl / Cmd + C / V" value={t("canvas.shortcut.copyPasteNodes")} />
-                    <Shortcut label="Ctrl / Cmd + G" value={t("canvas.shortcut.group")} />
-                    <Shortcut label="Ctrl / Cmd + Shift + G" value={t("canvas.shortcut.ungroup")} />
-                    <Shortcut label="Delete / Backspace" value={t("canvas.shortcut.delete")} />
-                </div>
-            </Modal>
+            <CanvasShortcutsDialog open={shortcutsOpen} onClose={closeShortcuts} />
         </div>
     );
 }
+
+const CanvasShortcutsDialog = memo(function CanvasShortcutsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+    const { t } = useTranslation();
+    const theme = useCanvasTheme();
+    return (
+        <Modal title={t("canvas.shortcuts")} open={open} onCancel={onClose} footer={null} centered>
+            <div className="space-y-3 border-t pt-4 text-sm" style={{ borderColor: theme.node.stroke }}>
+                <Shortcut label={`Ctrl / Space + ${t("canvas.shortcut.drag")}`} value={t("canvas.shortcut.toggleTool")} />
+                <Shortcut label={t("canvas.shortcut.wheel")} value={t("canvas.shortcut.zoom")} />
+                <Shortcut label={t("canvas.shortcut.drag")} value={t("canvas.shortcut.boxSelect")} />
+                <Shortcut label={`Shift / Cmd + ${t("canvas.shortcut.click")}`} value={t("canvas.shortcut.addSelection")} />
+                <Shortcut label="Ctrl / Cmd + C / V" value={t("canvas.shortcut.copyPasteNodes")} />
+                <Shortcut label="Ctrl / Cmd + G" value={t("canvas.shortcut.group")} />
+                <Shortcut label="Ctrl / Cmd + Shift + G" value={t("canvas.shortcut.ungroup")} />
+                <Shortcut label="Delete / Backspace" value={t("canvas.shortcut.delete")} />
+            </div>
+        </Modal>
+    );
+});
 
 function Shortcut({ label, value }: { label: ReactNode; value: string }) {
     return (
