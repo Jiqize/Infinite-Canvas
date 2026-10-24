@@ -243,7 +243,7 @@ function PoseReferenceContent({ ctx }: CanvasNodeContentProps) {
 export default definePlugin({
     id: 'pose-reference',
     name: '姿势参考节点',
-    version: '1.1.0',
+    version: '1.1.1',
     description: '3D 白膜选姿势、机位与景别，或从图片借用姿势',
     nodes: [{
         type: 'pose-reference:node', title: '姿势参考', icon: '🕺', description: '白膜工作台或图片参考，生成同一人物的新姿势',

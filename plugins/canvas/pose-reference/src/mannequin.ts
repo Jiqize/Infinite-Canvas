@@ -67,12 +67,12 @@ const PRESETS: Record<PoseId, Preset> = {
         joints: {
             head: [0, 1.4, 0], neck: [0, 1.17, 0],
             shoulderL: [-0.29, 1.1, 0], shoulderR: [0.29, 1.1, 0],
-            elbowL: [-0.4, 0.73, 0.1], elbowR: [0.4, 0.73, 0.1],
-            wristL: [-0.32, 0.35, 0.38], wristR: [0.32, 0.35, 0.38],
+            elbowL: [-0.42, 0.68, 0.14], elbowR: [0.42, 0.68, 0.14],
+            wristL: [-0.5, 0.27, 0.48], wristR: [0.5, 0.27, 0.48],
             hipL: [-0.18, 0.35, 0], hipR: [0.18, 0.35, 0],
-            kneeL: [-0.55, 0.2, 0.5], kneeR: [0.55, 0.2, 0.5],
-            ankleL: [0.22, 0.11, 0.72], ankleR: [-0.22, 0.11, 0.72],
-            toeL: [0.34, 0.07, 0.88], toeR: [-0.34, 0.07, 0.88],
+            kneeL: [-0.52, 0.22, 0.46], kneeR: [0.52, 0.22, 0.46],
+            ankleL: [0.09, 0.11, 0.58], ankleR: [-0.09, 0.11, 0.58],
+            toeL: [0.25, 0.08, 0.72], toeR: [-0.25, 0.08, 0.72],
         },
     },
 };
@@ -93,8 +93,7 @@ export function createMannequinStage(initial: StageSettings) {
     renderer.domElement.style.height = '100%';
     renderer.domElement.style.display = 'block';
 
-    const body = new THREE.MeshStandardMaterial({ color: 0xe9eae8, roughness: 0.9 });
-    const joint = new THREE.MeshStandardMaterial({ color: 0xe3e4e2, roughness: 0.9 });
+    const body = new THREE.MeshStandardMaterial({ color: 0xe9eae8, roughness: 0.83 });
     scene.add(new THREE.HemisphereLight(0xffffff, 0xd6d9de, 1.3));
     const key = new THREE.DirectionalLight(0xffffff, 1.7);
     key.position.set(3, 6, 5);
@@ -128,18 +127,77 @@ export function createMannequinStage(initial: StageSettings) {
         group.add(mesh);
         return mesh;
     };
-    const ellipse = (group: THREE.Group, coords: Point, scale: Point, material = body) => {
-        const mesh = addPart(group, new THREE.SphereGeometry(1, 20, 14), material, point(coords));
+    const ellipse = (group: THREE.Group, coords: Point, scale: Point) => {
+        const mesh = addPart(group, new THREE.SphereGeometry(1, 24, 18), body, point(coords));
         mesh.scale.set(...scale);
         return mesh;
     };
-    const limb = (group: THREE.Group, from: Point, to: Point, radius: number, material = body) => {
-        const a = point(from);
-        const b = point(to);
-        const direction = b.clone().sub(a);
-        const mesh = addPart(group, new THREE.CapsuleGeometry(radius, Math.max(0.01, direction.length() - radius * 2), 6, 14), material, a.add(b).multiplyScalar(0.5));
-        mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
-        return mesh;
+    const loft = (group: THREE.Group, sections: Point[], position: Point) => {
+        const curve = new THREE.CatmullRomCurve3(sections.map(point));
+        const steps = (sections.length - 1) * 4;
+        const sides = 24;
+        const vertices: number[] = [];
+        const indices: number[] = [];
+        for (let i = 0; i <= steps; i++) {
+            const { x, y, z } = curve.getPoint(i / steps);
+            for (let j = 0; j < sides; j++) {
+                const angle = j * Math.PI * 2 / sides;
+                vertices.push(Math.cos(angle) * Math.max(x, 0.001), y, Math.sin(angle) * Math.max(z, 0.001));
+                if (i === steps) continue;
+                const a = i * sides + j;
+                const b = i * sides + (j + 1) % sides;
+                const c = a + sides;
+                const d = b + sides;
+                indices.push(a, c, b, b, c, d);
+            }
+        }
+        const first = sections[0];
+        const last = sections[sections.length - 1];
+        const bottom = vertices.length / 3;
+        vertices.push(0, first[1], 0, 0, last[1], 0);
+        for (let j = 0; j < sides; j++) {
+            indices.push(bottom, j, (j + 1) % sides);
+            indices.push(bottom + 1, steps * sides + (j + 1) % sides, steps * sides + j);
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        geometry.setIndex(indices);
+        geometry.computeVertexNormals();
+        return addPart(group, geometry, body, point(position));
+    };
+    const limb = (group: THREE.Group, joints: Point[], radii: [number, number][]) => {
+        const curve = new THREE.CatmullRomCurve3(joints.map(point));
+        const steps = 24;
+        const sides = 16;
+        const frames = curve.computeFrenetFrames(steps, false);
+        const vertices: number[] = [];
+        const indices: number[] = [];
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const center = curve.getPointAt(t);
+            const next = radii.findIndex(([at]) => at >= t);
+            const before = radii[Math.max(0, next - 1)];
+            const after = radii[next < 0 ? radii.length - 1 : next];
+            const radius = THREE.MathUtils.lerp(before[1], after[1], before === after ? 0 : (t - before[0]) / (after[0] - before[0]));
+            for (let j = 0; j < sides; j++) {
+                const angle = j * Math.PI * 2 / sides;
+                const position = center.clone()
+                    .addScaledVector(frames.normals[i], Math.cos(angle) * radius)
+                    .addScaledVector(frames.binormals[i], Math.sin(angle) * radius);
+                vertices.push(position.x, position.y, position.z);
+                if (i === steps) continue;
+                const a = i * sides + j;
+                const b = i * sides + (j + 1) % sides;
+                const c = a + sides;
+                const d = b + sides;
+                indices.push(a, b, c, b, d, c);
+            }
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        geometry.setIndex(indices);
+        geometry.computeVertexNormals();
+        addPart(group, geometry, body, new THREE.Vector3());
     };
     const rebuild = (pose: PoseId) => {
         if (model) {
@@ -152,21 +210,20 @@ export function createMannequinStage(initial: StageSettings) {
         const p: Skeleton = { ...BASE, ...preset.joints };
         const group = new THREE.Group();
         const hipY = (p.hipL[1] + p.hipR[1]) / 2;
-        const torsoProfile = [
-            [0.08, 0], [0.2, 0.03], [0.23, 0.15], [0.18, 0.28],
-            [0.18, 0.45], [0.23, 0.62], [0.31, 0.73], [0.28, 0.79], [0.08, 0.85],
-        ].map(([x, y]) => new THREE.Vector2(x, y));
-        const torsoGeometry = new THREE.LatheGeometry(torsoProfile, 24);
-        torsoGeometry.scale(1, 1, 0.72);
-        const torso = addPart(group, torsoGeometry, body, new THREE.Vector3(0, hipY - 0.03, 0));
+        const torso = loft(group, [
+            [0.15, -0.14, 0.1], [0.22, -0.07, 0.14], [0.25, 0.05, 0.16],
+            [0.22, 0.2, 0.15], [0.2, 0.34, 0.135], [0.22, 0.48, 0.15],
+            [0.27, 0.63, 0.17], [0.3, 0.74, 0.15], [0.23, 0.82, 0.12], [0.065, 0.9, 0.065],
+        ], [0, hipY, 0]);
         torso.rotation.y = preset.torsoYaw || 0;
-        ellipse(group, [0, hipY, 0], [0.23, 0.19, 0.18]);
-        limb(group, p.neck, [0, hipY + 0.75, 0], 0.075);
+        limb(group, [[0, hipY + 0.84, 0], p.neck, [0, p.head[1] - 0.12, 0]], [[0, 0.075], [0.5, 0.068], [1, 0.055]]);
         const head = new THREE.Group();
         head.position.copy(point(p.head));
         head.rotation.y = preset.headYaw || 0;
-        ellipse(head, [0, 0, 0], [0.17, 0.23, 0.16]);
-        ellipse(head, [0, -0.025, 0.17], [0.045, 0.07, 0.045], joint);
+        loft(head, [
+            [0.04, -0.16, 0.05], [0.095, -0.13, 0.1], [0.125, -0.07, 0.125],
+            [0.14, 0.02, 0.14], [0.125, 0.11, 0.125], [0.08, 0.16, 0.09], [0.015, 0.18, 0.025],
+        ], [0, 0, 0]);
         group.add(head);
         (['L', 'R'] as const).forEach((side) => {
             const shoulder = p[side === 'L' ? 'shoulderL' : 'shoulderR'];
@@ -176,15 +233,16 @@ export function createMannequinStage(initial: StageSettings) {
             const knee = p[side === 'L' ? 'kneeL' : 'kneeR'];
             const ankle = p[side === 'L' ? 'ankleL' : 'ankleR'];
             const toe = p[side === 'L' ? 'toeL' : 'toeR'];
-            ellipse(group, shoulder, [0.105, 0.1, 0.105], joint);
-            limb(group, shoulder, elbow, 0.095);
-            ellipse(group, elbow, [0.078, 0.078, 0.078], joint);
-            limb(group, elbow, wrist, 0.072);
-            ellipse(group, wrist, [0.065, 0.105, 0.048]);
-            limb(group, hip, knee, 0.135);
-            ellipse(group, knee, [0.105, 0.105, 0.105], joint);
-            limb(group, knee, ankle, 0.103);
-            limb(group, ankle, toe, 0.075);
+            const armRoot: Point = [shoulder[0] * 0.55, shoulder[1] + 0.03, shoulder[2]];
+            limb(group, [armRoot, shoulder, elbow, wrist], [[0, 0.03], [0.3, 0.082], [0.42, 0.08], [0.66, 0.055], [0.8, 0.052], [1, 0.036]]);
+            const handDirection = point(wrist).sub(point(elbow)).normalize();
+            const hand = ellipse(group, point(wrist).addScaledVector(handDirection, 0.045).toArray() as Point, [0.042, 0.075, 0.028]);
+            hand.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), handDirection);
+            const legRoot: Point = [hip[0] * 0.55, hip[1] + 0.14, hip[2]];
+            const thigh = pose === 'sit' ? 0.1 : 0.115;
+            limb(group, [legRoot, hip, knee, ankle], [[0, 0.035], [0.3, thigh], [0.47, thigh], [0.67, 0.075], [0.82, 0.085], [1, 0.048]]);
+            const foot = ellipse(group, point(ankle).lerp(point(toe), 0.55).toArray() as Point, [0.07, 0.048, 0.14]);
+            foot.rotation.y = Math.atan2(toe[0] - ankle[0], toe[2] - ankle[2]);
         });
         scene.add(group);
         model = group;
@@ -240,7 +298,6 @@ export function createMannequinStage(initial: StageSettings) {
             floor.geometry.dispose();
             (floor.material as THREE.Material).dispose();
             body.dispose();
-            joint.dispose();
             renderer.dispose();
         },
     };
